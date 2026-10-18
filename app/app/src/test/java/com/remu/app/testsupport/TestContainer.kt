@@ -82,13 +82,13 @@ class TestWorld(
 }
 
 /** waitUntil that idles Robolectric's main looper on each check, so coroutine resumes run. */
-fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitFor(timeoutMs: Long = 5_000, condition: () -> Boolean) =
+fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitFor(timeoutMs: Long = 15_000, condition: () -> Boolean) =
     waitUntil(timeoutMs) { waitForIdle(); condition() }
 
 /** Waits until a node with this tag exists. */
-fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitForTag(tag: String, timeoutMs: Long = 5_000) =
+fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitForTag(tag: String, timeoutMs: Long = 15_000) =
     waitUntil(timeoutMs) { onAllNodes(androidx.compose.ui.test.hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
 
 /** Waits until a node with exactly this text exists. */
-fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitForText(text: String, timeoutMs: Long = 5_000) =
+fun androidx.compose.ui.test.junit4.ComposeContentTestRule.waitForText(text: String, timeoutMs: Long = 15_000) =
     waitUntil(timeoutMs) { onAllNodes(androidx.compose.ui.test.hasText(text), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }

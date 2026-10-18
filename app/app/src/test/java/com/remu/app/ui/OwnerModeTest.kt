@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -203,6 +204,8 @@ class OwnerModeTest {
         detail()
         rule.waitForTag("visit_v_1")
         rule.onNodeWithTag("purchase_p_1").performScrollTo().assertIsDisplayed()
+        // The staff list loads separately; wait for the name instead of racing it on slow machines.
+        rule.waitUntil(15_000) { rule.onAllNodesWithText("Greeted by Rajesh", substring = true).fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithText("Greeted by Rajesh", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Not greeted", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("play_clip_v_1").performScrollTo().performClick()
