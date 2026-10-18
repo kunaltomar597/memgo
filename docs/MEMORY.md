@@ -1,52 +1,58 @@
 # Remu Project Memory
 
-Purpose: the current state of the Remu project, rewritten at the end of every task so the next session starts from the truth, not from memory.
+Purpose: the current state of the Remu project, rewritten at the end of every task so the next session starts from the truth, not from memory. Permanent decisions live in docs/DECISIONS.md.
 
-## Current status
+## Current status (2026-10-18, build pass 1)
 
-As of 2026-10-18: the documentation set is complete and reviewed. The repository folder layout exists, git is initialised on `main`, and the first commit holds the documentation set. No code has been written yet. TASK-001 remains open until the GitHub repository is created and pushed.
+Every software component of v0.1 is built and tested. 95 of 134 tasks are ticked in TASKS.md. Each of the other 39 has a status line naming what is left; all of them need a Raspberry Pi, a real DVR, an outside account, the lawyer or the pilot shops.
 
-## Completed
+| Component | State | Checks |
+|---|---|---|
+| hub (`hub/`, Python 3.11) | face pipeline, LAN API, consent chain, sync, jobs, unlock, discovery, preview, recovery | 130 tests, ruff, mypy strict |
+| cloud (`cloud/`, Next.js 15) | mirror, pairing, ingest, WhatsApp, FCM, exports, ops, metrics | 142 tests on PGlite, lint, typecheck, build |
+| app (`app/`, Kotlin, Compose) | Cashier mode and Owner mode | 128 JVM and Robolectric tests, lint; instrumented tests on an emulator |
+| full stack | `tests/integration/test_full_stack.py` | Postgres in Docker, real cloud, mock Graph API, syncing hub |
 
-- docs/BRIEF.md, the product brief dated 2026-10-18, the source of truth for every document.
-- Root: README.md, CLAUDE.md, TASKS.md, .env.example, .gitignore.
-- docs/: BRIEF.md, PRD.md, ARCHITECTURE.md, DESIGN.md, RULES.md, TEST_PLAN.md, SECURITY.md, PRIVACY_AND_CONSENT.md, DECISIONS.md, MEMORY.md, PILOT_PLAN.md, RESEARCH.md, PROMPTS.md.
-- .cursor/rules/: general.mdc, frontend.mdc, backend.mdc, testing.mdc.
-- Component READMEs: hub/README.md, app/README.md, cloud/README.md, tests/README.md, scripts/README.md.
-- Folder skeleton: hub/, app/, cloud/, tests/unit, tests/integration, tests/e2e, tests/eval, scripts/.
+Repository: https://github.com/kunaltomar597/memgo. Work is on branch `feature/p0-setup`, pull request #1. CI runs hub, cloud and app jobs.
 
-## Current task
+## Demonstrated end to end
 
-TASK-001 [all] Initialise the monorepo (Phase 0: Project setup). From TASKS.md:
+- Console demo: `make fake-camera` and `make dev` print `ALERT member=m_demo score=0.977 frames=3/5` within seconds of the face entering the frame.
+- Phase 2 integration test against the live RTSP stream: pair, enrol from a frame, match, WebSocket alert, visit row, encrypted clip, intact chain and a clean privacy scan.
+- Full-stack test: pairing and claim, enrolment, the WhatsApp notice to the mock Graph API, activation on `delivered` only, thumbs-up, byte-identical hub and cloud consent exports, anchor match, STOP deletion, and owner removal off the shop WiFi.
+- Accuracy: on LFW the false accept rate at 0.45 is 0 on every subset, and scrambled templates score exactly like raw ones. Numbers are in docs/RESEARCH.md section 7.
 
-- The layout from docs/ARCHITECTURE.md exists: `hub/`, `app/`, `cloud/`, `tests/unit/`, `tests/integration/`, `tests/e2e/`, `tests/eval/`, `scripts/`, `docs/`, `.cursor/rules/`.
-- `.gitignore` excludes `.env`, `.env.local`, `google-services.json`, hub data directories, downloaded model packs, sample videos, `node_modules/`, `.venv/`, Gradle and Next.js build output.
-- `git init` done on `main`, first commit made, GitHub repository created and pushed.
+## Bugs found and fixed during the build
 
-The hub tooling scaffold is TASK-002 and the root `make check` target is TASK-005. They come after this task.
+- The plain phone number sat in the SQLite outbox until sync. The privacy scanner caught it; it is now sealed at rest and scrubbed after the ack (ADR-028).
+- The cloud double-encoded every jsonb parameter on real Postgres, including the consent records' JSON columns. The full-stack test caught it (ADR-035).
+- The device token and pairing code were inside the encrypted data directory they are needed to unlock (ADR-029).
+- The eval harness took the largest face in benchmark photos instead of the labelled centre face (ADR-031).
 
 ## Known issues
 
-- InsightFace model packs (`buffalo_l`, `buffalo_sc`) are non-commercial. Obtain a commercial licence or switch packs before Phase 9 (see docs/RESEARCH.md section 3 and ADR-003). No code issues yet.
+- The InsightFace model packs are licensed for non-commercial research only (TASK-123). No shop goes live before this closes.
+- The eval harness reports the `age_gap` subset as missing: no licence-clean age-gap set exists yet.
+- The cloud has no per-second rate limit on the WhatsApp webhook route (TASK-113 gap).
+- The security review (TASK-112) runs after this pass; its findings are listed under TASK-112.
 
-## Open questions
+## Current task
 
-Blocking items first. The full list lives in each document under the tag "OPEN:".
+TASK-112 security review fixes, then the field tasks.
 
-- OPEN: InsightFace model packs (`buffalo_l`, `buffalo_sc`) are licensed for non-commercial research only. Obtain a commercial licence or switch packs and re-run `tests/eval/` before the pilot. Blocks Phase 9. See docs/RESEARCH.md section 3.
-- OPEN: Pairing direction. The brief describes both the hub showing a code typed into the app and the app showing a code. TASKS.md and docs/ARCHITECTURE.md flow A keep the hub-generated code typed into the app; confirm with the founder before TASK-028 in Phase 2.
-- OPEN: Pending window. A PENDING_NOTICE member whose notice never delivers keeps a template indefinitely; a 7-day window after which the template is deleted is a proposal only. The lawyer decides. See docs/ARCHITECTURE.md section 5 and docs/PRIVACY_AND_CONSENT.md section 10.
-- OPEN: FCM payload. The push carries only `shop_id` and `visit_id`; decide whether the lock-screen notification shows the first name or only "Member at the gate". See docs/SECURITY.md.
-- OPEN: Lost owner phone. The app keeps only in-memory state plus DataStore (no database), but a single-phone owner has no way to revoke a lost phone without calling Remu support in MVP. See docs/SECURITY.md.
-- OPEN: SSH on pilot hubs. The shipped image has no SSH; decide the hub update channel (signed wheel versus manual SSH) and whether an owner-enabled time-limited shell exists for pilot support. See docs/ARCHITECTURE.md and docs/SECURITY.md.
-- OPEN: Which city hosts the pilot.
-- OPEN: Lawyer sign-off on the exact cashier script and notice wording (hi-IN-v1.0, wa-v1.0) before the pilot.
-- OPEN: WhatsApp Business Account and template approval: business entity, dedicated number, and who submits `WHATSAPP_TEMPLATE_MEMBER_NOTICE_EN` and `WHATSAPP_TEMPLATE_MEMBER_NOTICE_HI` to Meta.
-- OPEN: Pi 5 sourcing for the pilot: supplier and landed price within the 9,000 to 10,000 rupee kit budget.
-- OPEN: Which DVR brands to support first (CP Plus, Hikvision, Dahua).
-- OPEN: Discount policy per shop; the v1.0 scripts promise 5 percent off the next visit.
-- OPEN: The exact monthly software price within 500 to 1,500 rupees, set after the pilot.
+## Open questions for the founder
+
+- Pilot city, start date, the shops, and which DVR brands to support first.
+- Lawyer sign-off of hi-IN-v1.0 and wa-v1.0, the standee, the staff FAQ and the consent record format (TASK-071, TASK-125).
+- Model pack licence: a commercial licence, or a different pack plus a new harness run (TASK-123).
+- Pairing direction (ADR-033 chose the hub's code typed into the app), lock-screen text (ADR-036) and phone-only members (ADR-032). These are provisional; confirm or supersede them.
+- A pending window for notices that never deliver (suggested 7 days, lawyer).
+- SSH on pilot hubs and the hub update channel (TASK-098).
+- Owner sign-in method (the app ships email and password through Supabase Auth).
+- Accounts to create: Supabase (Mumbai), Vercel (bom1), Meta Business with a WhatsApp number and templates, Firebase, Sentry.
 
 ## Next step
 
-Start TASK-001. Before writing code, read CLAUDE.md, docs/PRD.md, docs/ARCHITECTURE.md, docs/RULES.md and TASKS.md, explain the plan for TASK-001, and wait for a go. Rewrite this file when TASK-001 is done. Note: TASKS.md TASK-008 expects this file to name TASK-009 as the current task at that point; that criterion is checked in TASKS.md, not here.
+1. Merge pull request #1 once CI is green.
+2. Create the accounts above and fill `cloud/.env.local` and the app's BuildConfig values; deploy the cloud to a preview.
+3. Flash a Pi 5 with `scripts/build_pi_image.sh`, provision it, and run TASK-098 to TASK-105 on real hardware.
