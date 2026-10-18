@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Hindi translations are required for every string (TASK-052). -->
+    <issue id="MissingTranslation" severity="error" />
+    <!-- Bundled Inter and Noto fonts are intentional (docs/DESIGN.md section 2). -->
+    <issue id="UnusedResources" severity="warning" />
+</lint>

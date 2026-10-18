@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Release: HTTPS only. The hub's self-signed certificate is checked by its pinned fingerprint
+     in code (FingerprintTrustManager), the cloud by the system trust store. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

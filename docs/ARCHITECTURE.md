@@ -85,25 +85,39 @@ Commands are in CLAUDE.md. `make check` at the root runs lint, typecheck and tes
 
 ### 3.1 Hub internals
 
-Module names follow TASKS.md.
+As built on 2026-10-18 (build pass 1). Module names follow TASKS.md.
 
 ```
-hub/                 pyproject.toml, Makefile, models/ (gitignored), tests/
+hub/                   pyproject.toml, uv.lock, Makefile, deploy/ (systemd units, hub.env), tests/
 └── remu_hub/
-    ├── settings.py  REMU_* variables, defaults, validation, one typed settings object
-    ├── video/       source.py (OpenCV RTSP reader, reconnect, throttle)
-    ├── faces/       models.py (pack loader), detect.py (SCRFD), embed.py (align and ArcFace), age.py, scramble.py (matrix from the shop key)
-    ├── match/       gallery.py (active templates, cosine), decide.py (3 of 5, cooldown)
-    ├── pipeline.py  wires source, detect, embed, scramble, match and decide into one loop
-    ├── db/          schema.sql, migrations/, consent.py (chain writer), members.py (state machine), crypto.py
-    ├── clips/       recorder.py, encrypt.py
-    ├── api/         app.py (FastAPI, HTTPS, tokens, staff PINs), routes/, GET /ws
-    ├── sync/        outbox.py, client.py (flush), inbox.py
-    ├── jobs/        expire_members.py, cleanup_clips.py, delete_templates.py, anchor.py, health.py, scheduler
-    └── cli.py       remu-hub init | db migrate | models download | staff add | consent verify | consent export | discover | demo | jobs run | status
+    ├── settings.py    REMU_* variables, defaults, validation, state_dir and shop_key_path
+    ├── keys.py        shop key file (0600), HKDF derivations, AES-GCM Sealer
+    ├── phone.py       E.164 normalisation, phone_hash, PhoneVault (phone_enc)
+    ├── video/         source.py (newest-frame RTSP reader, reconnect, throttle), discover.py, preview.py
+    ├── faces/         models.py, detect.py (SCRFD), align.py, embed.py (only model call site), age.py,
+    │                  scramble.py (orthogonal Q from the shop key), linalg.py
+    ├── match/         gallery.py (active templates, cosine), decide.py (3 of 5, cooldown)
+    ├── pipeline.py    FaceEngine, Tracker, Pipeline (source to decide), ConsoleSink
+    ├── hub.py         Hub service: enrolment and age gate, members, withdraw, activate, decisions, health
+    ├── events.py      EventBus for the WebSocket, 24-hour replay table
+    ├── clips.py       ClipStore (AES-GCM files), ClipRecorder (5 s from the first agreeing frame)
+    ├── db/            migrations/0001_init.sql, database.py (locked connection), ids.py (ULID),
+    │                  consent.py (append_consent_record, verify_chain), members.py (transition),
+    │                  visits.py, auth.py (Argon2id PINs, app tokens, pairing codes)
+    ├── api/           app.py (FastAPI routes of docs/API_CONTRACT.md section 1), tls.py
+    ├── sync/          outbox.py (allowlist, phone sealed at rest), client.py, inbox.py, loop.py
+    ├── jobs/          delete_templates.py, expire_members.py, cleanup_clips.py, anchor.py, scheduler.py
+    ├── export.py      local consent CSV
+    ├── recovery.py    integrity check, daily copy without templates or clips, restore
+    ├── unlock.py      LUKS volume, passphrase HKDF(shop key, unlock token), boot retry
+    ├── observability.py  Sentry with the before-send scrubber
+    ├── systemd.py     sd_notify READY and watchdog
+    ├── runtime.py     serve: API, pipeline, gallery refresh, counter clips, sync
+    └── cli.py, cli_more.py  remu-hub init | db migrate | models download | staff add |
+                       consent verify | consent export | serve | unlock | jobs run | jobs ... | demo | status
 ```
 
-Dependency direction: `api`, `jobs` and `cli` call `db`, `match`, `faces` and `sync`. `faces` knows nothing about the database. `db` knows nothing about HTTP.
+Dependency direction: `api`, `jobs`, `sync` and `cli` call `hub`, which calls `db`, `match` and `faces`. `faces` knows nothing about the database. `db` knows nothing about HTTP. Discovery has no CLI command; it runs through `GET /discover` and `POST /discover`.
 
 ### 3.2 App internals
 

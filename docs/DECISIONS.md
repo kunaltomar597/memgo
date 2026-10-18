@@ -329,3 +329,120 @@ Reason: The product's whole value is one greeting. Two taps give the only ground
 Consequences: Both taps work offline and sync through `events_outbox`. A Not them carries the visit id and its 30-day clip on the hub, never a photo.
 
 Alternatives considered: A star rating (too much at the shop door).
+
+## ADR-026 Direct ONNX port of SCRFD and ArcFace, no `insightface` package
+
+Status: Accepted, 2026-10-18 (build).
+
+Decision: The hub runs the InsightFace model files directly on ONNX Runtime with its own SCRFD post-processing (`faces/detect.py`), Umeyama alignment (`faces/align.py`) and ArcFace embedding (`faces/embed.py`). The `insightface` Python package is not a dependency.
+
+Reason: The package needs a C compiler to install and pulls in extra libraries, which complicates the Pi image. The port uses the same preprocessing as the reference: detection mean 127.5 and scale 1/128, recognition mean 127.5 and scale 1/127.5, and the age model with no external normalisation, because its graph starts with its own subtract and multiply nodes (checked on the model files).
+
+Consequences: `faces/detect.py` must follow any change in the model pack's output layout. The eval harness (ADR-031) catches a preprocessing mistake as a drop in accuracy.
+
+Alternatives considered: the `insightface` package (heavier install); OpenCV DNN face detectors (lower accuracy than SCRFD).
+
+## ADR-027 The fixture video is generated from a public-domain portrait
+
+Status: Accepted, 2026-10-18 (build). Closes the OPEN items in TASK-007 and TASK-013.
+
+Decision: Unit tests and the fake gate camera use one committed face image, the NASA portrait of astronaut Eileen Collins (public domain, from scikit-image), in `hub/tests/fixtures/`. `cd hub && make setup` generates `tests/eval/samples/gate_fixture.mp4` from it with ffmpeg. Nothing is hosted or downloaded.
+
+Reason: No customer and no volunteer appears in any test media, so no consent form or hosting is needed for development.
+
+Consequences: Tests cover one identity only. Multi-person accuracy comes from the eval harness on LFW (ADR-031) and later the consented team set (TASK-122).
+
+## ADR-028 The plain phone number is sealed in the outbox
+
+Status: Accepted, 2026-10-18 (build).
+
+Decision: The `notice_request` event's `phone_e164` is stored in `events_outbox` sealed with AES-GCM under a key derived from the shop key. The sync client unseals it only to send. Once the cloud acknowledges the event, the hub sets the field to null.
+
+Reason: The privacy scanner found the plain number in the SQLite WAL file during the Phase 2 integration test. The contract allows the number in transit to the cloud, not at rest on the hub.
+
+Consequences: The outbox needs the phone sealer configured, which `Hub` does at start. A test asserts the stored row holds no digits of the number.
+
+## ADR-029 Shop key, device token and pairing code live outside the encrypted data directory
+
+Status: Accepted, 2026-10-18 (build).
+
+Decision: On the Pi the shop key is `/etc/remu/shop.key` (root, 0600), handed to the services with systemd `LoadCredential`. The device token and pairing code live in `/var/lib/remu/state` (`REMU_STATE_DIR`). The hub runs as the dedicated `remu` user. `ExecStartPre=+remu-hub unlock` runs as root, fetches the unlock token and opens the LUKS volume at `REMU_DATA_DIR`.
+
+Reason: The unlock needs the shop key and the device token before the volume is open, so they cannot be inside it. `LoadCredential` keeps the key root-owned while an unprivileged service reads it.
+
+Consequences: The honest limit in docs/SECURITY.md stands. A copied SD card holds the shop key and the device token, so it can fetch an unlock token until the device is revoked.
+
+## ADR-030 The console demo stays in memory
+
+Status: Accepted, 2026-10-18 (build). Deviates from TASK-033's demo bullet.
+
+Decision: `remu-hub demo` keeps its Phase 1 behaviour: an in-memory gallery and an ephemeral key. The enrol-through-the-API-and-SQLite flow is covered by `tests/integration/test_enrol_then_match.py`, where test code sets the member active.
+
+Reason: A demo that enrols through SQLite would have to activate the member itself, and TASK-033 also says no hub code path may activate a member. Test code may; shipped code may not.
+
+## ADR-031 The 0.45 threshold is kept
+
+Status: Accepted, 2026-10-18 (build). Records TASK-023.
+
+Decision: `REMU_MATCH_THRESHOLD` stays at 0.45 for the pilot.
+
+Evidence (docs/RESEARCH.md section 7; LFW, `buffalo_l:4c06341c`, centre face, 8,400 pairs): at 0.45 the true accept rate is 97.2 percent on base pairs, 94.5 percent in low light and 96.2 percent turned. The false accept rate is 0 on every subset. The true accept rate at a false accept rate of 0.1 percent is 99.3 percent. Scrambled templates score exactly like raw ones.
+
+Reason: 0.45 sits well above the threshold that gives a false accept rate of 0.1 percent, so a false alert is rare, which the brief prefers to a missed one. The 3 of 5 frame vote adds a second guard at the door.
+
+Consequences: Every measurable bar is met (FAR at or under 0.1 percent and TAR at least 95 percent on base pairs at 0.45; scrambled within 0.1 points of raw). The `age_gap` subset has no licence-clean data source and is reported as missing. The harness exits with code 3 ("incomplete") until a consented age-gap set exists (TASK-122). Any threshold change needs a new harness report and an ADR.
+
+OPEN: a licence-clean age-gap pair set; confirm the LFW terms allow internal development use.
+
+## ADR-032 A phone member is a member row with no template
+
+Status: Accepted, 2026-10-18 (build). Closes the TASK-048 OPEN provisionally.
+
+Decision: "Skip face, save bill only" creates a `members` row with status `pending_notice`, no template and no consent record. It never enters the gallery and no notice is sent. If the same number later gets a face, the same member gains a template, a consent record and a notice.
+
+Reason: This needs no new status value and keeps the state machine of docs/ARCHITECTURE.md section 5 unchanged.
+
+OPEN: the lawyer confirms whether phone-only members need their own notice text before WhatsApp offers are sent to them.
+
+## ADR-033 Pairing direction: the hub's code is typed into the app
+
+Status: Accepted, 2026-10-18 (build). Closes the TASK-028 OPEN for the MVP; the founder may supersede it.
+
+Decision: `remu-hub init` generates the pairing code and writes it to the sticker file. The owner types it into the app, which sends it to the hub (`POST /pair`) and to the cloud (`POST /api/devices/pair`). The hub receives its device token through the claim poll.
+
+Reason: The hub never has to show a screen, and the full-stack test exercises this path end to end.
+
+## ADR-034 The Pi image is built on a Pi
+
+Status: Accepted, 2026-10-18 (build). Closes the first OPEN in TASK-098.
+
+Decision: `scripts/build_pi_image.sh` runs on a freshly flashed Raspberry Pi OS Lite 64-bit (Bookworm, Python 3.11). The finished card is cloned for the other kits.
+
+Reason: No cross-architecture container build to maintain, and the result is exactly what runs in the shop.
+
+OPEN: whether SSH stays enabled on pilot hubs, and the update channel (signed wheel pulled by the hub, or manual SSH).
+
+## ADR-035 jsonb parameters are cast through text in the cloud
+
+Status: Accepted, 2026-10-18 (build).
+
+Decision: Every jsonb SQL parameter in `cloud/src` is written `$n::text::jsonb`, with a test that fails on a bare `$n::jsonb`.
+
+Reason: The postgres.js driver serialises jsonb-typed parameters itself, so pre-stringified JSON was stored as a JSON string. The PGlite unit tests did not show it; the full-stack test against real Postgres did. It affected inbox payloads and the JSON columns of mirrored consent records.
+
+## ADR-036 Lock-screen notification text
+
+Status: Accepted, 2026-10-18 (build), provisional. Closes the TASK-076 OPEN for the MVP.
+
+Decision: The Android lock screen shows only "Member at the gate" (Hindi: "गेट पर मेंबर"). The name appears once the phone is unlocked.
+
+Reason: An FCM push carries ids only. A name on the lock screen would show a customer's identity to anyone near the owner's phone.
+
+## ADR-037 Dependencies added during the build
+
+Status: Accepted, 2026-10-18 (build).
+
+- Hub (Python 3.11): numpy, opencv-python-headless, onnxruntime, fastapi, uvicorn, httpx, cryptography, argon2-cffi, pydantic and sentry-sdk, pinned in `hub/uv.lock`.
+- Cloud (Node 20): next, react, react-dom, zod, jose, postgres, @supabase/supabase-js 2.109.0 (the last release for Node 20), pdf-lib with @pdf-lib/fontkit and regenerator-runtime, and @sentry/nextjs. Tests use @electric-sql/pglite.
+- App: AGP 8.5.2, Kotlin 1.9.24, Compose BOM 2024.06.00, CameraX 1.3.4, ML Kit face detection 16.1.6, OkHttp 4.12, Media3 1.3.1, the Firebase BOM (applied only when `google-services.json` exists), sentry-android and zxing.
+- Fonts: Inter and Noto Sans Devanagari under the OFL, with their licence files.

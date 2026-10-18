@@ -1,0 +1,10 @@
+# cloud-local ignores (the root .gitignore also covers env files and build output)
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+supabase/.temp/
+supabase/.branches/

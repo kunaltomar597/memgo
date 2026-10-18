@@ -1,0 +1,25 @@
+# Remu hub job schedule: deletion sweep, health, nightly expiry, clip cleanup, daily copy, anchor.
+[Unit]
+Description=Remu hub jobs
+After=remu-hub.service
+Requires=remu-hub.service
+
+[Service]
+User=remu
+Group=remu
+EnvironmentFile=/etc/remu/hub.env
+LoadCredential=shop.key:/etc/remu/shop.key
+Environment=REMU_SHOP_KEY_PATH=%d/shop.key
+Environment=REMU_STATE_DIR=/var/lib/remu/state
+ExecStart=/opt/remu/venv/bin/remu-hub jobs run
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/remu
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

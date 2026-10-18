@@ -84,50 +84,57 @@ Remu/
 
 ## Quickstart
 
-No component exists yet. `hub/`, `app/`, `cloud/`, `tests/` and `scripts/` hold placeholder READMEs. The commands below are the standard ones from the brief and will work once the task named next to each component is done. The ids come from `TASKS.md`, which wins.
+Requirements: Python via `uv` (it installs 3.11), ffmpeg, Node 20, JDK 17 or newer and the Android SDK. Docker only for the full-stack test.
 
-Hub, created by TASK-002 (Phase 0):
-
-```
-cd hub && make setup       # virtual environment, dependencies, model pack, fixture video
-make fake-camera           # mediamtx looping the sample video as an RTSP stream (script from TASK-007)
-make dev                   # run the hub against the fake camera
-make test
-make lint
-make typecheck
-```
-
-App, created by TASK-004 (Phase 0):
+Hub (`hub/`):
 
 ```
-cd app && ./gradlew assembleDebug
-./gradlew test
-./gradlew lint
-./gradlew connectedAndroidTest   # needs a device or an emulator
+cd hub && make setup       # Python 3.11 env, model pack (about 300 MB), fixture video
+make fake-camera           # terminal 1: RTSP stream of the fixture video on rtsp://127.0.0.1:8554/gate
+make dev                   # terminal 2: console demo, prints ALERT member=m_demo score=0.977 frames=3/5
+make lint typecheck test   # 130 tests
+REMU_INTEGRATION=1 uv run pytest ../tests/integration/test_enrol_then_match.py   # needs make fake-camera
+make eval                  # accuracy harness (needs tests/eval/prepare_lfw.py first)
 ```
 
-Cloud, created by TASK-003 (Phase 0):
+Run the real hub service on a laptop:
 
 ```
-cd cloud && npm run dev
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npx playwright test              # once the owner web dashboard exists (later phase)
+export REMU_SHOP_ID=dev-shop REMU_RTSP_GATE_URL=rtsp://127.0.0.1:8554/gate
+uv run remu-hub init                       # shop key, certificate, pairing code
+uv run remu-hub staff add --name Owner --role owner
+uv run remu-hub serve                      # HTTPS LAN API on :8443, gate pipeline, sync if REMU_CLOUD_URL is set
 ```
 
-Root, created by TASK-005 (Phase 0):
+Cloud (`cloud/`):
 
 ```
-make check                       # lint, typecheck and tests for every component
+cd cloud && npm ci
+npm run lint && npm run typecheck && npm test && npm run build   # 142 tests on in-process Postgres (PGlite)
+npm run dev                                                      # http://localhost:3000
 ```
 
-Environment: copy the matching section of `.env.example` into the component's local env file. No env file is ever committed.
+App (`app/`):
+
+```
+cd app && ./gradlew assembleDebug test lint      # 128 JVM and Robolectric tests
+./gradlew connectedAndroidTest                   # needs an emulator or a device
+```
+
+`google-services.json` (Firebase) goes in `app/app/` and is never committed; without it the app builds with push disabled.
+
+Everything at once: `make check` at the root. Hub and cloud together over real HTTP:
+
+```
+cd cloud && npm run build && cd ../hub
+REMU_FULLSTACK=1 uv run pytest ../tests/integration/test_full_stack.py   # Postgres in Docker, mock WhatsApp
+```
+
+On the Pi: `scripts/build_pi_image.sh` (see hub/deploy/ for the systemd units), then `scripts/provision_hub.py`.
 
 ## Status
 
-Documentation complete on 2026-10-18. No code yet. Next step: TASK-001 (Phase 0: Project setup). `docs/MEMORY.md` holds the current state.
+Build pass 1 finished on 2026-10-18. Every software component of v0.1 exists and is tested. The remaining tasks need hardware, accounts or people; `TASKS.md` marks each with a status line, and `docs/MEMORY.md` lists them.
 
 ## How we work
 
