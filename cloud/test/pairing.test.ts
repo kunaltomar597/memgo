@@ -30,7 +30,9 @@ describe("POST /api/ops/devices", () => {
     const id = (r.json as unknown as { device_id: string }).device_id;
     expect(id).toMatch(/^d_[0-9A-Z]{26}$/);
     const row = (await t.db.query<Record<string, unknown>>("select pairing_code, status, generation, shop_id from devices where id = $1", [id]))[0];
-    expect(row).toEqual({ pairing_code: "K7QM-2XPA", status: "provisioned", generation: 1, shop_id: null });
+    // TASK-112: only the SHA-256 of the normalised code is stored.
+    expect(row).toEqual({ pairing_code: sha256Hex("K7QM-2XPA"), status: "provisioned", generation: 1, shop_id: null });
+    expect(JSON.stringify(await t.db.query("select * from devices"))).not.toContain("K7QM-2XPA");
     const dup = await call(opsDevicesRoute, "POST", { path: "/api/ops/devices", headers: OPS(), body: { pairing_code: "K7QM-2XPA", serial: "pi5-other" } });
     expect(dup.status).toBe(409);
     for (const headers of [{}, { "x-remu-ops-key": "wrong" }] as Record<string, string>[]) {

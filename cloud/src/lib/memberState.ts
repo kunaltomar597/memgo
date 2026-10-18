@@ -6,7 +6,8 @@ import { log } from "./log";
  * The cloud's member state machine (docs/ARCHITECTURE.md section 5). Every member status write in
  * the cloud goes through this file. `transition()` can never set `active`; only
  * `activateOnDelivery()` can, and only the WhatsApp delivered webhook calls it. A database trigger
- * (0002_members.sql) enforces the same rules, so a stray UPDATE fails too.
+ * (0002_members.sql) enforces the same rules, so a stray UPDATE fails too. Every path to withdrawn
+ * (owner remove, STOP, hub) or expired clears whatsapp_messages.phone_e164 for the member.
  */
 export const ALLOWED: Readonly<Record<MemberStatus, readonly MemberStatus[]>> = {
   pending_notice: ["active", "withdrawn"],
@@ -52,6 +53,13 @@ async function apply(
     await tx.query("update members set status = $2, updated_at = now() where id = $1", [memberId, to]);
     if (to === "active") {
       await tx.query("select set_config('remu.activation', '', true)");
+    }
+    if (to === "withdrawn" || to === "expired") {
+      // Retention (TASK-112): the plain number is not kept for a member who has left.
+      await tx.query(
+        "update whatsapp_messages set phone_e164 = null, updated_at = now() where member_id = $1 and phone_e164 is not null",
+        [memberId],
+      );
     }
     await tx.query(
       `insert into member_transitions (shop_id, member_id, from_status, to_status, by_actor, reason, at)

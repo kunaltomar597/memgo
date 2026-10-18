@@ -52,15 +52,16 @@ describe("a full lifecycle leaves no PII in logs and no cloud-authored consent r
       expect(logs, leak).not.toContain(leak);
     }
     expect(logs).toContain(e.memberId);
-    // The plain number lives only in whatsapp_messages.phone_e164.
+    // The plain number lived only in whatsapp_messages.phone_e164, and is cleared once the notice was
+    // delivered (TASK-112): after the lifecycle no table holds it, raw webhook JSON included.
     const tables = await t.db.query<{ table_name: string }>("select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'");
     for (const { table_name } of tables) {
       const dump = JSON.stringify(await t.db.query(`select * from ${table_name}`));
-      if (table_name === "whatsapp_messages") continue;
       expect(dump, table_name).not.toContain(PHONE);
+      expect(dump, table_name).not.toContain(from);
     }
     const wa = await t.db.query<{ phone_e164: string | null }>("select phone_e164 from whatsapp_messages where direction = 'out'");
-    expect(wa[0]!.phone_e164).toBe(PHONE);
+    expect(wa[0]!.phone_e164).toBeNull();
     // The FCM push carried ids only.
     for (const c of h.fcmCalls()) {
       expect(c.body).not.toContain(NAME);

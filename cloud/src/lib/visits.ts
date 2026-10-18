@@ -9,7 +9,10 @@ export async function visitShop(db: Db, visitId: string): Promise<string> {
   return rows[0].shop_id;
 }
 
-/** The `alert` payload of docs/API_CONTRACT.md section 1, built from the mirror (TASK-069). */
+/**
+ * The `alert` payload of docs/API_CONTRACT.md section 1, built from the mirror (TASK-069). A member
+ * who has withdrawn or expired gets 410 gone: their card is not shown again (TASK-112).
+ */
 export async function buildCard(db: Db, visitId: string) {
   const rows = await db.query<{
     visit_id: string;
@@ -18,11 +21,12 @@ export async function buildCard(db: Db, visitId: string) {
     score: number;
     frames_agreed: number;
     display_name: string;
+    status: string;
     notes: string | null;
     member_since: string;
     household_label: string | null;
   }>(
-    `select v.id as visit_id, v.member_id, v.ts, v.score, v.frames_agreed, m.display_name, m.notes, m.member_since,
+    `select v.id as visit_id, v.member_id, v.ts, v.score, v.frames_agreed, m.display_name, m.status, m.notes, m.member_since,
        h.label as household_label
      from visits v join members m on m.id = v.member_id left join households h on h.id = m.household_id
      where v.id = $1`,
@@ -30,6 +34,7 @@ export async function buildCard(db: Db, visitId: string) {
   );
   const v = rows[0];
   if (!v) throw new ApiError(404, "not_found", "no such visit");
+  if (v.status === "withdrawn" || v.status === "expired") throw new ApiError(410, "gone", "member withdrawn or expired");
   const prev = await db.query<{ ts: Date }>(
     "select ts from visits where member_id = $1 and (ts < $2::timestamptz or (ts = $2::timestamptz and id < $3)) order by ts desc, id desc limit 1",
     [v.member_id, new Date(v.ts).toISOString(), v.visit_id],

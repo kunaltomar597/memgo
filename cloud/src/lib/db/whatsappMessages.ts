@@ -1,3 +1,4 @@
+import { redactNumbers } from "../waRedact";
 import type { Db } from "./types";
 
 export interface WaMessageRow {
@@ -58,9 +59,10 @@ export async function latestNoticeForPhoneHash(db: Db, hash: string): Promise<Wa
   return rows[0];
 }
 
+/** Appends one webhook object; sender and recipient numbers are replaced by phone_hash first. */
 export async function appendRaw(db: Db, id: string, raw: unknown): Promise<void> {
   await db.query(
     "update whatsapp_messages set raw_webhook_json = raw_webhook_json || jsonb_build_array($2::text::jsonb), updated_at = now() where id = $1::bigint",
-    [id, JSON.stringify(raw)],
+    [id, JSON.stringify(redactNumbers(raw))],
   );
 }

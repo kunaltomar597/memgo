@@ -34,14 +34,14 @@ Every route answers JSON (`{"error", "detail"}` on failure), refuses `multipart/
 | `GET /api/shops/{id}/devices` | owner of the shop | TASK-070 |
 | `POST /api/shops/{id}/consent-export?format=csv\|pdf` | owner of the shop | TASK-092, TASK-093 |
 | `POST /api/devices/pair` | owner session | TASK-057 |
-| `POST /api/devices/claim` | pairing code and serial | TASK-057 |
+| `POST /api/devices/claim` | pairing code and serial (optional `cert_sha256`) | TASK-057, TASK-112 |
 | `POST /api/devices/unlock` | device token | TASK-100 |
 | `POST /api/devices/fcm-token` | owner of the shop | TASK-068 |
 | `POST /api/devices/{id}/revoke` | owner of the shop | TASK-100 (not yet in docs/API_CONTRACT.md) |
 | `POST /api/hub/events` | device token | TASK-059, 060, 063, 068, 070 |
 | `GET /api/hub/inbox?after=` | device token (revoked devices too) | TASK-065, 066, 069 |
-| `POST /api/hub/anchor` | device token | TASK-061 |
-| `GET, POST /api/webhooks/whatsapp` | verify token, `X-Hub-Signature-256` | TASK-064, 065, 066 |
+| `POST /api/hub/anchor` | device token (today or yesterday, IST; insert-only) | TASK-061, TASK-112 |
+| `GET, POST /api/webhooks/whatsapp` | verify token, `X-Hub-Signature-256`; 50 requests/s per address | TASK-064, 065, 066, 112 |
 | `POST /api/members/{id}/withdraw` | owner of the shop | TASK-069 |
 | `GET /api/visits/{id}/card` | owner of the shop | TASK-069 |
 | `POST /api/visits/{id}/feedback` | owner of the shop | TASK-069 |
@@ -60,11 +60,13 @@ Owner sessions: `Authorization: Bearer <Supabase access token>`, verified server
     ├── src/lib/                 domain logic: ingest.ts, consentChain.ts, canonical.ts, memberState.ts,
     │                            devices.ts, notice.ts, whatsapp.ts, whatsappWebhook.ts, fcm.ts, push.ts,
     │                            anchor.ts, visits.ts, export.ts, exportPdf.ts, signing.ts, metrics.ts,
-    │                            monitor.ts, sentry.ts, log.ts, payloadGuard.ts, schemas.ts, phone.ts
+    │                            monitor.ts, sentry.ts, log.ts, payloadGuard.ts, schemas.ts, phone.ts,
+    │                            waRedact.ts, memoryRateLimit.ts
     ├── src/lib/db/              repository layer behind the Db interface (types.ts); postgres.ts is the
     │                            production adapter (porsager postgres on DATABASE_URL)
     ├── src/instrumentation.ts   Sentry on the Node.js runtime when SENTRY_DSN is set
-    ├── supabase/migrations/     0001 to 0007, RLS policies beside each table, pg_cron schedules in 0007
+    ├── supabase/migrations/     0001 to 0008, RLS policies beside each table, pg_cron schedules in 0007,
+    │                            TASK-112 security review changes in 0008
     ├── supabase/config.toml     Supabase CLI configuration
     ├── assets/fonts/            Noto Sans Devanagari Regular and Bold, with OFL.txt
     ├── scripts/db-reset.mjs     npm run db:reset
@@ -78,15 +80,19 @@ Migrations create the brief's mirrored tables (`shops`, `staff`, `households`, `
 - RLS is on for every table. `anon` has no grant anywhere. An owner (`authenticated`) reads only rows of shops where they have a `staff` row (`is_shop_member()`); writes go through the API routes, except renaming their own shop and deleting their own push tokens. `devices`, `whatsapp_messages`, `inbox_messages` and the support tables have no client policy at all.
 - `consent_records` is append-only: UPDATE, DELETE and TRUNCATE are revoked from every client role and `service_role`, and triggers refuse them even for the table owner. Record columns are stored exactly as the hub sent them (timestamps as text) so `record_hash` can be recomputed at any time.
 - A trigger on `members` refuses `active` unless the transaction set `remu.activation = 'notice_delivered'`, which only `memberState.activateOnDelivery()` does, and only the WhatsApp delivered webhook calls it. Terminal states are never left.
-- Phone numbers: `members.phone_hash` is the contract hash (lowercase hex SHA-256 of the E.164 string with the leading `+`). The plain number is kept only in `whatsapp_messages.phone_e164`, from the `notice_request` event.
+- Phone numbers: `members.phone_hash` is the contract hash (lowercase hex SHA-256 of the E.164 string with the leading `+`). The plain number is kept only in `whatsapp_messages.phone_e164`, from the `notice_request` event, and only until the send reaches `delivered`, `read` or `failed` or the member is withdrawn or expired (any path; `memberState.ts`), when it is set to null (TASK-112).
+- Pairing codes: `devices.pairing_code` holds the lowercase hex SHA-256 of the normalised code (trimmed, upper-cased), never the code; register, pair and claim hash before the insert or lookup (TASK-112). `devices.cert_sha256` holds the hub certificate fingerprint from the claim.
 
 ## Behaviour notes
 
-- Event ingest: each event is applied once in its own transaction (its ULID in `hub_events` is the idempotency key for every side effect: mirror write, WhatsApp send, FCM push). Results come back in request order; a rejected event never blocks later ones. A payload with a forbidden key or a base64 blob over 1,024 characters rejects the whole request with 400 `payload_forbidden` before anything is written.
+- Event ingest: each event is applied once in its own transaction (its ULID in `hub_events` is the idempotency key for every side effect: mirror write, WhatsApp send, FCM push). Results come back in request order; a rejected event never blocks later ones. A payload with a forbidden key or a base64 blob over 1,024 characters rejects only that event (`rejected`, reason `payload_forbidden`, nothing written) and the rest of the batch is processed (docs/API_CONTRACT.md section 7 item 8); forbidden content outside an event payload still refuses the request with 400 `payload_forbidden`, and binary content types still get 415.
+- Ingest ownership checks (TASK-112): a `consent_record` whose `member_id` is mirrored under another shop is rejected (`shop_mismatch`); a `staff_upsert` for a staff row the cloud authored (the owner row of `POST /api/shops`, `user_id` set) is acked and skipped, so the hub never changes its name, role or `user_id`; the hub never writes `user_id`.
+- Hash anchors: accepted only for today's or yesterday's date in Asia/Kolkata (400 otherwise). Insert-only: the first anchor for a shop and date stands; a repeat gets `match` against the stored row (true only when the stored anchor matched and the head is the same), and a repeat with another head flags `anchor_mismatch`.
+- Owner card: `GET /api/visits/{id}/card` answers 410 `{"error": "gone"}` once the member is withdrawn or expired.
 - Consent chain: every record's hash is recomputed and its `prev_hash` checked against the shop's mirrored head. A break is stored as received, with `hash_ok` or `link_ok` false, and flags `devices.chain_break` (plus a Sentry warning). Within a batch, records are linked by following `prev_hash` from the head; anything unlinked is taken by `ts` then id.
 - Notice: sent in the shop's `settings_json.notice_language` (falling back to the event's `language`), idempotent per consent record, retried 3 times on transient errors, then flagged on the member (`notice_failed`). The cloud never edits a consent record; the hub gets the `wamid` in `notice_status`.
-- Webhooks: the signature is checked over the raw body before parsing. The same status for the same `wamid` twice changes nothing twice. `delivered` activates and queues `member_status` (active) and `notice_status` (delivered); `read` never activates; `failed` leaves the member `pending_notice`. A 👍 button reply queues `thumbs_up`. A text `STOP` (trimmed, any case) withdraws the sender's members in every shop, or only in the shop of the quoted notice when it is a reply; a STOP that matches no member yet is kept and applied when the member row arrives, with the STOP's own time. Other inbound messages are stored; media messages are reduced to type and id.
-- Consent export CSV: header row with the columns of docs/API_CONTRACT.md section 3, one row per record in chain order (`purposes_json` and `notice_delivery_json` as canonical JSON), then trailing comment lines starting with `# ` (`shop_id`, `generated_at`, `record_count`, `chain_head_hash`, `chain_verified`, `chain_first_break`, `latest_anchor_date`, `latest_anchor_hash`, `anchor_matches_head`). The Ed25519 signature in `X-Remu-Signature` covers every byte, trailer included. `X-Remu-Public-Key` carries the raw 32-byte public key (base64) for verification; every export is logged in `export_log` with the file SHA-256.
+- Webhooks: the signature is checked over the raw body before parsing. The same status for the same `wamid` twice changes nothing twice. `delivered` activates and queues `member_status` (active) and `notice_status` (delivered); `read` never activates; `failed` leaves the member `pending_notice`. A 👍 button reply queues `thumbs_up`. A text `STOP` (trimmed, any case) withdraws the sender's members in every shop, or only in the shop of the quoted notice when it is a reply; a STOP that matches no member yet is kept and applied when the member row arrives, with the STOP's own time. Other inbound messages are stored without their text: id, type, timestamp, hashed sender and quoted wamid only; media messages are reduced to type and id. Raw webhook JSON never holds a phone number: `from`, `wa_id`, `recipient_id`, `display_phone_number` and the like are replaced by the phone_hash (`waRedact.ts`), and only a STOP keeps its text. The POST route allows 50 requests a second per client address (in-memory, per function instance) and answers 429 beyond, after the content-length check and before the body is read.
+- Consent export CSV: header row with the columns of docs/API_CONTRACT.md section 3, one row per record in chain order (`purposes_json` and `notice_delivery_json` as canonical JSON), every cell that starts with `=`, `+`, `-`, `@`, tab, carriage return or `'` prefixed with a single quote against formula injection (a reader restores the stored value by dropping one leading `'`), then trailing comment lines starting with `# ` (`shop_id`, `generated_at`, `record_count`, `chain_head_hash`, `chain_verified`, `chain_first_break`, `latest_anchor_date`, `latest_anchor_hash`, `anchor_matches_head`). The Ed25519 signature in `X-Remu-Signature` covers every byte, trailer included. `X-Remu-Public-Key` carries the raw 32-byte public key (base64) for verification; every export is logged in `export_log` with the file SHA-256.
 - Consent export PDF: A4 landscape, `pdf-lib` with Noto Sans Devanagari embedded (Hindi shop names and the `hi-IN-v1.0` cashier line render), 22 records per page, then a last page with the chain head, chain status, latest anchor, the CSV export's SHA-256 and Ed25519 signature and the public key. The PDF's own detached signature is in `X-Remu-Signature`.
 - `CONSENT_EXPORT_SIGNING_KEY`: base64 of the 32-byte Ed25519 seed, or base64 of the PKCS8 DER private key; a PEM `PRIVATE KEY` block also works. Make one with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
 - Unlock token: `HMAC-SHA256(HUB_PAIRING_SECRET, device_id + ":" + generation)`, base64url, derived per request; only its SHA-256 is stored. Revoke and unpair bump the generation.

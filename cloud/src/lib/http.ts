@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import { ConfigError } from "./env";
 import { log } from "./log";
-import { findForbidden } from "./payloadGuard";
+import { findForbidden, type Violation } from "./payloadGuard";
 import { zodReason } from "./schemas";
 
 /** Error codes of docs/API_CONTRACT.md conventions, plus internal for server faults. */
@@ -11,6 +11,7 @@ export type ErrorCode =
   | "not_found"
   | "invalid"
   | "conflict"
+  | "gone"
   | "rate_limited"
   | "locked"
   | "payload_forbidden"
@@ -96,7 +97,15 @@ export async function readJson<S extends z.ZodType>(
   return parsed.data;
 }
 
-export async function readRawJson(req: Request, maxBytes = DEFAULT_MAX_BODY): Promise<unknown> {
+/**
+ * Reads and parses a JSON body, then runs the payload_forbidden scan (400 on a hit). POST
+ * /api/hub/events passes a scan that skips event payloads, which ingest checks per event instead.
+ */
+export async function readRawJson(
+  req: Request,
+  maxBytes = DEFAULT_MAX_BODY,
+  scan: (raw: unknown) => Violation | null = findForbidden,
+): Promise<unknown> {
   const ct = req.headers.get("content-type") ?? "";
   if (!/^application\/json\b/i.test(ct.trim())) {
     throw new ApiError(415, "unsupported_media_type", "only application/json is accepted");
@@ -108,7 +117,7 @@ export async function readRawJson(req: Request, maxBytes = DEFAULT_MAX_BODY): Pr
   } catch {
     throw new ApiError(400, "invalid", "body is not valid JSON");
   }
-  const violation = findForbidden(raw);
+  const violation = scan(raw);
   if (violation) {
     log.warn("payload_forbidden", { reason: violation.reason });
     throw new ApiError(400, "payload_forbidden", `forbidden content at ${violation.path}`);

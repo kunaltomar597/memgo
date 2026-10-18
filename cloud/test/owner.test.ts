@@ -102,7 +102,7 @@ describe("hub health and last seen (TASK-070)", () => {
     await postEvents(h, A.deviceToken, [ev("health", healthPayload({ version: "0.1.3", locked: false }))]);
     let r = await call(devicesRoute, "GET", { path: `/api/shops/${A.shopId}/devices`, token: A.owner.token, params: { id: A.shopId } });
     expect(r.status).toBe(200);
-    expect(r.json).toEqual([{ id: A.deviceId, hub_version: "0.1.3", last_seen_at: "2026-10-18T17:30:00+05:30", online: true, locked: false, chain_break: false }]);
+    expect(r.json).toEqual([{ id: A.deviceId, hub_version: "0.1.3", last_seen_at: "2026-10-18T17:30:00+05:30", online: true, locked: false, chain_break: false, cert_sha256: null }]);
     h.clock.advance(15 * 60_000);
     r = await call(devicesRoute, "GET", { path: `/api/shops/${A.shopId}/devices`, token: A.owner.token, params: { id: A.shopId } });
     expect((r.json as unknown as { online: boolean }[])[0]!.online).toBe(true);
