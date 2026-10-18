@@ -386,11 +386,11 @@ Status: Accepted, 2026-10-18 (build). Records TASK-023.
 
 Decision: `REMU_MATCH_THRESHOLD` stays at 0.45 for the pilot.
 
-Evidence: see the eval numbers recorded in docs/RESEARCH.md section 7 (LFW, `buffalo_l:4c06341c`, centre face, 8,400 pairs). At 0.45 the false accept rate is 0 on every subset, and scrambled templates score exactly like raw ones.
+Evidence (docs/RESEARCH.md section 7; LFW, `buffalo_l:4c06341c`, centre face, 8,400 pairs): at 0.45 the true accept rate is 97.2 percent on base pairs, 94.5 percent in low light and 96.2 percent turned. The false accept rate is 0 on every subset. The true accept rate at a false accept rate of 0.1 percent is 99.3 percent. Scrambled templates score exactly like raw ones.
 
 Reason: 0.45 sits well above the threshold that gives a false accept rate of 0.1 percent, so a false alert is rare, which the brief prefers to a missed one. The 3 of 5 frame vote adds a second guard at the door.
 
-Consequences: Two bars are not met yet. The `age_gap` subset has no licence-clean data source and is reported as missing. The harness exits with code 3 ("incomplete") until a consented age-gap set exists (TASK-122). Any threshold change needs a new harness report and an ADR.
+Consequences: Every measurable bar is met (FAR at or under 0.1 percent and TAR at least 95 percent on base pairs at 0.45; scrambled within 0.1 points of raw). The `age_gap` subset has no licence-clean data source and is reported as missing. The harness exits with code 3 ("incomplete") until a consented age-gap set exists (TASK-122). Any threshold change needs a new harness report and an ADR.
 
 OPEN: a licence-clean age-gap pair set; confirm the LFW terms allow internal development use.
 

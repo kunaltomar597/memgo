@@ -167,3 +167,20 @@ Software at 500 to 1,500 rupees per shop per month. One retained 20,000 rupee cu
 - OPEN: Real false alert rate at doors. The target is at most 1 false alert per shop per day, measured by "Not them" taps. Lab numbers at a false accept rate of 0.1 percent do not predict a backlit doorway in Jaipur at 7 pm. Measure per shop and per camera in the pilot and tune the threshold 0.45 with the harness.
 - OPEN: DVR brands in the pilot city. Survey the 5 to 10 pilot shops for DVR brand, model, firmware, and whether the sub stream is enabled, before Phase 7. CP Plus is expected to dominate; confirm.
 - OPEN: Owner interviews, InsightFace commercial licence, age estimator error, Pi 5 latency and WhatsApp rupee rate, as marked in the sections above.
+
+## 7. Measured accuracy (build pass 1, 2026-10-18)
+
+Harness: `tests/eval/run_eval.py` on LFW (Labeled Faces in the Wild), 3,000 same-person and 3,000 different-person pairs from the standard `pairs.txt`. Synthetic subsets darken or turn image b for every fifth pair. Model pack `buffalo_l:4c06341c` with the hub's own detection, alignment and embedding code. The centre face is used in each photo, as the benchmark labels it. 18 of 8,400 pairs had a face the detector missed; they count as rejects.
+
+| Subset | Pairs | TAR at FAR 0.1 percent | Threshold for FAR 0.1 percent | TAR at 0.45 | FAR at 0.45 |
+|---|---|---|---|---|---|
+| base | 6,000 | 99.3 percent | 0.217 | 97.2 percent | 0 |
+| low_light | 1,200 | 99.8 percent | 0.159 | 94.5 percent | 0 |
+| angle | 1,200 | 99.8 percent | 0.152 | 96.2 percent | 0 |
+
+- Scrambled templates give exactly the same numbers as raw embeddings, as the orthogonal projection predicts.
+- At 0.45 no impostor pair was accepted in any subset, so a false alert at the door should be rare. The cost is about 3 percent of same-person pairs on good photos and 5.5 percent in low light falling under the threshold. The 3 of 5 frame vote at the gate gives a member several chances per visit.
+- The `age_gap` subset is missing: LFW has no age labels, and no licence-clean age-gap set is in hand. The harness reports "incomplete" until TASK-122 adds a consented set.
+- `tests/eval/baseline.json` holds these numbers. A later run may not drop any subset by more than 0.5 points.
+- Live performance on a Pi 5 and a real doorway is still unmeasured (TASK-104, TASK-121).
+- OPEN: the LFW terms of use for internal development.
