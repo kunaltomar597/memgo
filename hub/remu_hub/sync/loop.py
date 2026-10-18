@@ -22,7 +22,7 @@ BATCH = 200
 
 
 def device_token_path(settings: Settings) -> Path:
-    return settings.data_dir / "device.token"
+    return settings.state_dir / "device.token"
 
 
 def load_device_token(settings: Settings) -> str | None:
@@ -94,7 +94,7 @@ class SyncWorker:
 
     def cycle(self) -> None:
         if not self.client.device_token:
-            code_file = self.hub.settings.data_dir / "pairing.txt"
+            code_file = self.hub.settings.state_dir / "pairing.txt"
             if not code_file.exists() or not self.claim_once(code_file.read_text().strip()):
                 return
         self.flush_once()

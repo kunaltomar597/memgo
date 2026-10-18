@@ -50,9 +50,14 @@ def start_pipeline(hub: Hub, settings: Settings) -> tuple[Pipeline, threading.Th
                 time.sleep(2)
 
     def watch() -> None:
+        warned = 0.0
         while True:
             hub.stream_state = source.state
             hub.fps = pipe.fps
+            if 0 < pipe.fps < 5.0 and time.monotonic() - warned > 300:
+                # TASK-104: report it, never switch the model pack automatically.
+                log.warning("hub sustains only %.1f fps (target 5 to 8)", pipe.fps)
+                warned = time.monotonic()
             time.sleep(1)
 
     t = threading.Thread(target=loop, name="gate-pipeline", daemon=True)
@@ -75,7 +80,33 @@ def start_gallery_refresh(hub: Hub) -> threading.Thread:
     return t
 
 
+class CounterClips:
+    """Optional counter stream (TASK-108): feeds only a second clip and the aim preview.
+
+    No face in it is detected, embedded or matched: the notice promises
+    recognition at the door only.
+    """
+
+    def __init__(self, hub: Hub, url: str) -> None:
+        from remu_hub.clips import ClipRecorder
+
+        self.recorder = ClipRecorder(hub.clips)
+        self.source = RtspSource(url, fps=6.0)
+
+    def start(self) -> None:
+        def loop() -> None:
+            for tf in self.source.frames():
+                self.recorder(tf)
+
+        threading.Thread(target=loop, name="counter-stream", daemon=True).start()
+
+
 def serve(settings: Settings, *, with_pipeline: bool = True, with_sync: bool = True) -> int:
+    from remu_hub.observability import init_sentry
+    from remu_hub.recovery import recover_if_corrupt
+
+    init_sentry(settings.sentry_dsn, settings.shop_id)
+    recover_if_corrupt(settings.db_path)
     hub = Hub(settings)
     cert, key = ensure_cert(settings.certs_dir)
     app = create_app(hub, cert)
@@ -83,6 +114,16 @@ def serve(settings: Settings, *, with_pipeline: bool = True, with_sync: bool = T
     if with_pipeline:
         hub.engine  # load models before serving  # noqa: B018
         start_pipeline(hub, settings)
+        if settings.rtsp_counter_url:
+            counter = CounterClips(hub, settings.rtsp_counter_url)
+            counter.start()
+            original = hub.recorder.start
+
+            def both(visit_id: str, first_ts: float) -> None:
+                original(visit_id, first_ts)
+                counter.recorder.start(visit_id, first_ts)
+
+            hub.recorder.start = both  # type: ignore[method-assign]
     if with_sync and settings.cloud_url:
         from remu_hub.sync.loop import start_sync
 

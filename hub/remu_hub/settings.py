@@ -56,9 +56,19 @@ class Settings:
         return self.data_dir / "certs"
 
     @property
+    def state_dir(self) -> Path:
+        """Files needed before the encrypted data directory opens: device token, pairing code.
+
+        On the Pi this is /var/lib/remu/state (REMU_STATE_DIR), outside the LUKS volume;
+        in development it is the data directory.
+        """
+        explicit = os.environ.get("REMU_STATE_DIR")
+        return Path(explicit) if explicit else self.data_dir
+
+    @property
     def shop_key_path(self) -> Path:
         explicit = os.environ.get("REMU_SHOP_KEY_PATH")
-        return Path(explicit) if explicit else self.data_dir / "shop.key"
+        return Path(explicit) if explicit else self.state_dir / "shop.key"
 
 
 def _get(env: Mapping[str, str], name: str) -> str | None:

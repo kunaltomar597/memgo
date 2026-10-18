@@ -28,6 +28,9 @@ def register(sub: Any) -> None:
     serve.add_argument("--no-pipeline", action="store_true")
     serve.add_argument("--no-sync", action="store_true")
     sub.add_parser("status", help="show health and the last log lines")
+    unlock = sub.add_parser("unlock", help="open the encrypted data directory (systemd)")
+    unlock.add_argument("--container", type=Path, default=Path("/var/lib/remu/data.luks"))
+    unlock.add_argument("--create", action="store_true", help="create the container first")
     jobs = sub.add_parser("jobs", help="scheduled jobs").add_subparsers(dest="sub")
     jobs.add_parser("run", help="run the job schedule forever")
     jobs.add_parser("delete-templates", help="run the template deletion sweep once")
@@ -62,7 +65,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
     cert, _ = ensure_cert(s.certs_dir)
     code = auth.create_hub_code(db)
-    pairing = s.data_dir / "pairing.txt"
+    pairing = s.state_dir / "pairing.txt"
     if code:
         pairing.write_text(code + "\n")
         pairing.chmod(0o600)
@@ -206,3 +209,24 @@ def cmd_jobs_anchor(_: argparse.Namespace) -> int:
         return 1
     print(anchor.run(_hub(), client))
     return 0
+
+
+@command("unlock")
+def cmd_unlock(args: argparse.Namespace) -> int:
+    from remu_hub.keys import read_shop_key
+    from remu_hub.unlock import Volume, available, passphrase, unlock_at_boot
+
+    s = _settings()
+    if not available():
+        print("cryptsetup not found: development hubs use a plain directory", file=sys.stderr)
+        return 0
+    client = _client()
+    if client is None or not client.device_token:
+        print("hub not paired with the cloud yet", file=sys.stderr)
+        return 1
+    key = read_shop_key(s.shop_key_path)
+    volume = Volume(args.container, s.data_dir)
+    if args.create and not args.container.exists():
+        volume.create(passphrase(key, client.unlock()))
+        return 0
+    return 0 if unlock_at_boot(volume, key, client.unlock) else 1

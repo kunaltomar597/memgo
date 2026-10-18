@@ -86,9 +86,13 @@ class RtspSource:
                 continue
             self.state = "ok"
             backoff = self._backoff_initial
+            last_error_log = 0.0
             while not self._stop.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
+                    if time.monotonic() - last_error_log > 60:  # TASK-103: once a minute
+                        log.warning("decode error or end of stream on the gate camera")
+                        last_error_log = time.monotonic()
                     break
                 with self._lock:
                     self._latest = TimedFrame(self._clock(), np.asarray(frame, np.uint8))

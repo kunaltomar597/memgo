@@ -89,6 +89,12 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path(os.environ.get("REMU_EVAL_ROOT", "")))
     ap.add_argument("--pairs", type=Path, default=HERE / "data" / "pairs.csv")
     ap.add_argument("--smoke", action="store_true", help="first 100 base pairs only")
+    ap.add_argument(
+        "--face",
+        choices=["center", "largest"],
+        default="center",
+        help="which face to use when an image has several (benchmarks centre it)",
+    )
     ap.add_argument("--baseline", type=Path, default=HERE / "baseline.json")
     ap.add_argument("--out", type=Path, default=HERE / "reports")
     args = ap.parse_args()
@@ -118,6 +124,13 @@ def main() -> int:
             else:
                 img = transform(img, tag)
                 dets = engine.detect(img, min_face_px=20)
+                if dets and args.face == "center":
+                    # Benchmark photos centre the labelled person; other faces are bystanders.
+                    h, w = img.shape[:2]
+                    dets.sort(
+                        key=lambda d: ((d.box[0] + d.box[2]) / 2 - w / 2) ** 2
+                        + ((d.box[1] + d.box[3]) / 2 - h / 2) ** 2
+                    )
                 if not dets:
                     cache[key] = None
                 else:
@@ -151,6 +164,7 @@ def main() -> int:
         "pairs": len(rows),
         "failed_to_detect": no_face,
         "smoke": args.smoke,
+        "face_rule": args.face,
         "subsets": {},
     }
     failures: list[str] = []

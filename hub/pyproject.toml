@@ -55,7 +55,7 @@ module = ["cv2", "cv2.*", "onnxruntime", "onnxruntime.*", "argon2", "argon2.*", 
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../tests/integration"]
+testpaths = ["tests", "../tests/integration", "../tests/unit"]
 markers = [
   "models: needs the downloaded model pack (skipped when absent)",
   "integration: end-to-end test, runs when REMU_INTEGRATION=1",

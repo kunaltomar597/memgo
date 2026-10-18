@@ -142,3 +142,11 @@ def redeem_code(db: Database, code: str) -> str | None:
             return None
         db.execute("UPDATE pairing_codes SET used_at = ? WHERE code_hash = ?", (now_iso(), h))
         return str(r["role"])
+
+
+def revoke_role(db: Database, role: str) -> int:
+    cur = db.execute(
+        "UPDATE app_tokens SET revoked_at = ? WHERE role = ? AND revoked_at IS NULL",
+        (now_iso(), role),
+    )
+    return int(cur.rowcount or 0)

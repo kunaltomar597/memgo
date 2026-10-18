@@ -25,6 +25,7 @@ from typing import Any
 from remu_hub.db import IST
 from remu_hub.hub import Hub
 from remu_hub.jobs import anchor, cleanup_clips, delete_templates, expire_members
+from remu_hub.recovery import daily_copy
 from remu_hub.sync import outbox
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class Scheduler:
                 needs_ntp=True,
             ),
             Job("prune_ws", lambda now: hub.bus.prune(), at=dt.time(3, 0)),
+            Job("daily_copy", lambda now: daily_copy(hub.settings.db_path), at=dt.time(3, 15)),
         ]
         if client is not None:
             self.jobs.append(

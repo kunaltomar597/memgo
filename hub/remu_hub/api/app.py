@@ -88,6 +88,16 @@ class HouseholdPatch(Strict):
     remove_member_ids: list[str] = Field(default_factory=list)
 
 
+class DiscoverIn(Strict):
+    user: str = Field(default="admin", max_length=64)
+    password: str = Field(default="", max_length=128)
+    subnet: str | None = Field(default=None, max_length=32)
+
+
+class StreamsIn(Strict):
+    gate_url: str = Field(min_length=8, max_length=500)
+
+
 class VisitPatch(Strict):
     greeted: bool | None = None
     greeted_by: str | None = None
@@ -145,7 +155,18 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
             raise HTTPException(403, "forbidden")
         return r
 
-    Role = Annotated[str, Depends(role)]
+    token_limiter = RateLimiter(120, 60.0)
+
+    def limited(
+        r: Annotated[str, Depends(role)], authorization: Annotated[str | None, Header()] = None
+    ) -> str:
+        key = "tok:" + auth.sha256(authorization or "")
+        if token_limiter.blocked(key):
+            raise HTTPException(429, "too many requests for this token")
+        token_limiter.hit(key)
+        return r
+
+    Role = Annotated[str, Depends(limited)]
     Owner = Annotated[str, Depends(owner)]
 
     @app.exception_handler(HTTPException)
@@ -190,6 +211,8 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         if granted is None:
             pair_limiter.hit(client)
             return error(401, "unauthorized", "wrong or used code")
+        if granted == "owner":
+            auth.revoke_role(hub.db, "owner")  # re-pairing replaces the old owner phone
         token = auth.issue_token(hub.db, granted)
         return {
             "app_token": token,
@@ -358,6 +381,61 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         from remu_hub.export import consent_csv
 
         return PlainTextResponse(consent_csv(hub.db), media_type="text/csv")
+
+    @app.post("/discover")
+    def discover_streams(body: DiscoverIn, _: Owner) -> list[dict[str, Any]]:
+        import base64
+
+        from remu_hub.video.discover import discover, local_subnet
+
+        found = discover(body.subnet or local_subnet(), body.user, body.password)
+        return [
+            {
+                "host": c.host,
+                "brand": c.brand,
+                "channel": c.channel,
+                "url": c.url,
+                "substream": c.substream,
+                "width": c.width,
+                "height": c.height,
+                "thumbnail_jpeg_b64": base64.b64encode(c.thumbnail_jpeg).decode(),
+            }
+            for c in found
+        ]
+
+    @app.put("/settings/streams")
+    def save_streams(body: StreamsIn, _: Owner) -> dict[str, str]:
+        if not body.gate_url.startswith("rtsp://"):
+            raise HTTPException(400, "gate_url must be an rtsp:// URL")
+        hub.db.set_kv("rtsp_gate_url", body.gate_url)
+        return {"status": "saved", "note": "restart the hub service to use the new stream"}
+
+    @app.get("/preview")
+    def preview(request: Request, _: Owner) -> Response:
+        from fastapi.responses import StreamingResponse
+
+        from remu_hub.video.preview import BOUNDARY, mjpeg
+        from remu_hub.video.source import RtspSource
+
+        if not is_lan(request.client.host if request.client else None):
+            return error(403, "forbidden", "preview works only on the shop network")
+        url = hub.db.get_kv("rtsp_gate_url") or hub.settings.rtsp_gate_url
+        source = RtspSource(url, fps=5.0)
+        stream = mjpeg(
+            (tf.frame for tf in source.frames()),
+            lambda f: hub.engine.detect(f),
+            min_face_px=hub.settings.min_face_px,
+        )
+
+        def body() -> Any:
+            try:
+                yield from stream
+            finally:
+                source.close()
+
+        return StreamingResponse(
+            body(), media_type=f"multipart/x-mixed-replace; boundary=" f"{BOUNDARY}"
+        )
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket) -> None:
