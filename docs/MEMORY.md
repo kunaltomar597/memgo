@@ -4,7 +4,7 @@ Purpose: the current state of the Remu project, rewritten at the end of every ta
 
 ## Current status
 
-As of 2026-10-18: the documentation set is complete and reviewed. The repository folder layout exists and git is initialised on `main` with no commits. The first commit is the next step. No code has been written yet.
+As of 2026-10-18: the documentation set is complete and reviewed. The repository folder layout exists, git is initialised on `main`, and the first commit holds the documentation set. No code has been written yet. TASK-001 remains open until the GitHub repository is created and pushed.
 
 ## Completed
 
