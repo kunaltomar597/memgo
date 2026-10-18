@@ -84,7 +84,7 @@ Remu/
 
 ## Quickstart
 
-Requirements: Python via `uv` (it installs 3.11), ffmpeg, Node 20, JDK 17 or newer and the Android SDK. Docker only for the full-stack test.
+Requirements: Python via `uv` (it installs 3.11), ffmpeg, Node 20, JDK 17 or newer and the Android SDK (set `ANDROID_HOME`, or put `sdk.dir=...` in `app/local.properties`). Docker only for the full-stack test. The first `make setup` downloads the model pack, about 300 MB.
 
 Hub (`hub/`):
 

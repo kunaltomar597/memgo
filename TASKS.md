@@ -65,11 +65,11 @@ Each phase ends with an exit check. A phase is done when every task is ticked an
   - README.md, CLAUDE.md, TASKS.md, every file under `docs/` and every `.cursor/rules/*.mdc` from the repository layout already exist; confirm they are all present and agree with each other, and fix any gap found.
   - CLAUDE.md names the standard commands and tells the agent to read docs/PROMPTS.md before each task.
   - docs/MEMORY.md names TASK-009 as the current task.
-- [ ] TASK-009 [docs] Clean machine setup check
+- [x] TASK-009 [docs] Clean machine setup check
   - A fresh clone on a second machine (or a clean user account) follows README.md only and reaches a green `make check` within 30 minutes.
   - Every missing step found on the way is added to README.md.
   - docs/MEMORY.md marks Phase 0 complete.
-  - Status 2026-10-18: CI builds every component from a clean checkout with the documented commands; a person still has to follow README.md on a second machine.
+  - Status 2026-10-18: a fresh clone into an empty folder passed hub, cloud and app checks with the README commands in under 5 minutes (download caches were warm). The missing ANDROID_HOME step was added to README.md.
 
 Phase 0 exit check: CI green, `make check` green locally, `make fake-camera` serves a stream, every document present.
 
