@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -81,7 +82,9 @@ fun MemberSearchScreen(vm: MembersViewModel, onBack: () -> Unit, onOpen: (String
             RemuTopBar(stringResource(R.string.members_title), navigationIcon = { BackIcon(onBack) })
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RemuField(s.query, vm::onQuery, stringResource(R.string.members_search_label), tag = "member_query")
-                PrimaryButton(stringResource(R.string.members_search), vm::search, working = s.loading, modifier = Modifier.testTag("member_search"))
+                // Search stays tappable while a search runs: a new tap replaces the one in flight.
+                PrimaryButton(stringResource(R.string.members_search), vm::search, modifier = Modifier.testTag("member_search"))
+                if (s.loading && s.results != null) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("members_loading"), color = c.primary)
                 if (vm.ownerMode) StatusFilters(s.status, vm::onStatus)
                 s.message?.let { RemuText(messageText(it), color = c.success, modifier = Modifier.testTag("members_message")) }
             }

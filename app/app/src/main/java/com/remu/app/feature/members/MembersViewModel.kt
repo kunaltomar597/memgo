@@ -57,12 +57,15 @@ class MembersViewModel(private val c: AppContainer, val ownerMode: Boolean) : Vi
 
     fun onStatus(status: String?) { _state.update { it.copy(status = status) }; search() }
 
+    private var searchJob: kotlinx.coroutines.Job? = null
+
     fun search() {
+        searchJob?.cancel() // the newest query wins
         val s = _state.value
         val q = s.query.trim()
         val phone = Validation.toE164(q)
         _state.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             val r = when {
                 phone != null -> c.hub.members(phone = phone, status = s.status)
                 q.isNotEmpty() -> c.hub.members(q = q, status = s.status)
