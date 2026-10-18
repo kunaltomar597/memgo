@@ -269,11 +269,11 @@ Phase 2 exit check: the integration test passes, the privacy scanner is green, a
   - Devanagari renders correctly on the stand phone at the chosen sizes (checked on a real device, screenshots in the pull request).
   - A lint rule fails the build on a missing Hindi string.
   - Status 2026-10-18: strings in both languages with a build check, and Devanagari checked on an emulator; screenshots on the real stand phone still need a person.
-- [ ] TASK-053 [app] Cashier mode end-to-end test
+- [x] TASK-053 [app] Cashier mode end-to-end test
   - A Maestro flow (or Compose UI test) on a device or emulator: pair with a local hub, select a face shown to the camera from a test image, fill the form, tap Make member, and assert the hub has one `pending_notice` member.
   - The flow is documented in docs/TEST_PLAN.md and runs with `./gradlew connectedAndroidTest` or `maestro test`.
   - Depends on: TASK-037, TASK-052.
-  - Status 2026-10-18: Maestro flow app/maestro/cashier_enrol.yaml and an instrumented test exist; they need a running hub on a device to execute.
+  - Status 2026-10-18: CashierEndToEndTest passed on an API 33 emulator against a live hub (`remu-hub serve`, reached at 10.0.2.2:8443). The invite pairing, PIN, a real camera crop, the age gate, the template, the consent record and `pending_notice` all checked; the privacy scan of the hub data folder was clean. Run it with the command in the test's header. The Maestro flow app/maestro/cashier_enrol.yaml is not run yet (Maestro is not installed).
 - [x] TASK-054 [docs] Phase 3 documentation update
   - The Cashier mode screens in docs/DESIGN.md match what was built (screenshots linked); the app module layout in docs/ARCHITECTURE.md matches the code.
   - docs/MEMORY.md marks Phase 3 complete.

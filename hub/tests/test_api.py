@@ -367,3 +367,20 @@ def test_clips_are_lan_only(hub: Hub, owner: dict[str, str]) -> None:
 
     assert is_lan("192.168.1.20") and is_lan("10.0.0.5") and is_lan("127.0.0.1")
     assert not is_lan("8.8.8.8") and not is_lan(None)
+
+
+def test_enrol_without_models_is_503(tmp_path: Path) -> None:
+    from remu_hub.faces.models import ModelError
+    from remu_hub.settings import load_settings
+
+    def broken(_: bytes) -> Any:
+        raise ModelError("model files missing")
+
+    settings = load_settings({"REMU_DATA_DIR": str(tmp_path / "d"), "REMU_SHOP_ID": "shop-1",
+                              "REMU_RTSP_GATE_URL": "rtsp://x"})
+    hub = Hub(settings, engine_factory=broken)
+    client = TestClient(create_app(hub))
+    token = client.post("/pair", json={"code": auth.create_hub_code(hub.db)}).json()["app_token"]
+    staff = auth.add_staff(hub.db, "shop-1", "Ravi", "cashier", "4821")
+    r = enrol(client, {"Authorization": f"Bearer {token}"}, staff)
+    assert r.status_code == 503 and r.json()["error"] == "unavailable"

@@ -223,6 +223,14 @@ class Hub:
         if req.amount < 0:
             raise EnrolError(400, "invalid", "amount cannot be negative")
 
+        if req.faces:
+            from remu_hub.faces.models import ModelError
+
+            try:
+                self.engine  # noqa: B018 - load the model pack before decoding crops
+            except ModelError as exc:
+                raise EnrolError(503, "unavailable", "face models are not installed on the hub "
+                                 "(run `remu-hub models download`)") from exc
         # CPU work before taking the database lock.
         accepted: list[tuple[int, NDArray[np.float32]]] = []
         refused: list[dict[str, Any]] = []
