@@ -9,6 +9,7 @@ Conventions for every route below:
 - Money is `amount` in rupees as a number with at most two decimals.
 - Errors are `{"error": "<code>", "detail": "<human text>"}` with the HTTP status. Codes used: `unauthorized`, `forbidden`, `not_found`, `invalid`, `under_18`, `no_face`, `conflict`, `rate_limited`, `locked`, `payload_forbidden`.
 - Phone numbers travel as E.164 (`+919876543210`). The hub normalises 10-digit Indian mobiles and `+91` or `91` prefixes.
+- `phone_hash` is the lowercase hex SHA-256 of the UTF-8 E.164 string including the leading `+`, with no prefix and no salt. Example: `+919876543210` hashes to `sha256("+919876543210")`. WhatsApp webhooks give the sender as `919876543210`; the cloud adds the `+` before hashing.
 
 ## 1. Hub LAN API (app to hub)
 
