@@ -7,9 +7,8 @@ forbidden key raises, so a biometric can never be queued by mistake.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -150,14 +149,19 @@ def _for_send(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+_B64_CHARS = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
+
+
 def _looks_like_binary(value: str) -> bool:
+    """The exact rule of cloud/src/lib/payloadGuard.ts looksLikeBase64Blob, so the hub never
+    queues an event the cloud would refuse (H1): over 1,024 characters, and after removing
+    whitespace only base64 or base64url characters, of a length that is not 4n+1."""
     if len(value) <= 1024:
         return False
-    try:
-        base64.b64decode(value, validate=True)
-    except (binascii.Error, ValueError):
+    compact = re.sub(r"\s+", "", value)
+    if not _B64_CHARS.match(compact):
         return False
-    return True
+    return len(compact.rstrip("=")) % 4 != 1
 
 
 def check_payload(event_type: str, payload: dict[str, Any]) -> None:

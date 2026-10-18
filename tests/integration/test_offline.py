@@ -20,7 +20,7 @@ from remu_hub.sync import outbox
 from remu_hub.sync.client import CloudError
 from remu_hub.sync.loop import SyncWorker
 from remu_hub.video.source import TimedFrame
-from tests.helpers import face, make_hub
+from tests.helpers import deliver_and_activate, face, make_hub
 from tests.test_sync import MockCloud, client
 
 
@@ -47,7 +47,7 @@ def test_two_hours_offline_then_sync(tmp_path: Path) -> None:
     old = hub.enrol(EnrolIn(staff_id=staff, phone="9111100001", faces=[FaceIn(**face(110))]))[
         "members"
     ][0]["member_id"]
-    hub.activate(old)
+    deliver_and_activate(hub, old)
     for _ in range(4):  # 2 hours of 30-second cycles, sampled
         try:
             worker.cycle()

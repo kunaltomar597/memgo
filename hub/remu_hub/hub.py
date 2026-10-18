@@ -11,6 +11,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -43,6 +44,28 @@ from remu_hub.video.source import TimedFrame
 log = logging.getLogger(__name__)
 MAX_CROP_BYTES = 300 * 1024
 MAX_FACES = 6
+MAX_CROP_PIXELS = 4000 * 4000  # a 300 KB JPEG can still declare a huge image
+
+
+def jpeg_size(raw: bytes) -> tuple[int, int] | None:
+    """Width and height from the JPEG frame header, read before any pixel is decoded."""
+    i = 2
+    while i + 9 < len(raw):
+        if raw[i] != 0xFF:
+            return None
+        marker = raw[i + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seg = int.from_bytes(raw[i + 2 : i + 4], "big")
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            h = int.from_bytes(raw[i + 5 : i + 7], "big")
+            w = int.from_bytes(raw[i + 7 : i + 9], "big")
+            return w, h
+        i += 2 + seg
+    return None
+
+
 SCRIPT_VERSION = "hi-IN-v1.0"
 NOTICE_VERSION = "wa-v1.0"
 
@@ -116,9 +139,16 @@ class Hub:
         self.recorder = ClipRecorder(self.clips)
         self.stream_state = "connecting"
         self.fps = 0.0
-        self.locked = False
+        # Revoked by the cloud (device_revoked): persisted, so a restart stays locked (H2).
+        self.revoked = self.db.get_kv("revoked") == "1"
+        self.data_locked = False
+        shop_file = settings.state_dir / "cloud_shop_id"
+        self.cloud_shop_id: str | None = (
+            (shop_file.read_text().strip() or None) if shop_file.exists() else None
+        )
         self.internet = False
         self.ensure_shop()
+        self.ensure_pairing_code()
         self.refresh_gallery()
 
     # ---- setup ---------------------------------------------------------------
@@ -143,6 +173,21 @@ class Hub:
             self.db.execute(
                 "INSERT INTO shops (id, shop_key_ref) VALUES (?, ?)",
                 (self.settings.shop_id, str(self.settings.shop_key_path)),
+            )
+
+    def ensure_pairing_code(self) -> None:
+        """A code made at Pi first boot (`init --state-only`) is registered on first start."""
+        from remu_hub.db import auth
+
+        code_file = self.settings.state_dir / "pairing.txt"
+        if (
+            code_file.exists()
+            and self.db.one("SELECT 1 FROM pairing_codes WHERE kind = 'hub'") is None
+        ):
+            self.db.execute(
+                "INSERT INTO pairing_codes (code_hash, kind, role, created_at) "
+                "VALUES (?, 'hub', 'owner', ?)",
+                (auth.sha256(auth.normalise_code(code_file.read_text())), now_iso()),
             )
 
     def shop(self) -> dict[str, Any]:
@@ -172,8 +217,33 @@ class Hub:
         )
 
     # ---- gallery ---------------------------------------------------------------
+    def seal_secret(self, value: str) -> str:
+        from remu_hub.keys import Sealer
+
+        return base64.b64encode(
+            Sealer(self.shop_key, b"remu/kv-secret/v1").seal(value.encode())
+        ).decode()
+
+    def open_secret(self, sealed: str) -> str:
+        from remu_hub.keys import Sealer
+
+        return Sealer(self.shop_key, b"remu/kv-secret/v1").open(base64.b64decode(sealed)).decode()
+
+    @property
+    def locked(self) -> bool:
+        return self.revoked or self.data_locked
+
+    def revoke(self) -> None:
+        """The kill switch: stop matching and every LAN route except /health, across restarts."""
+        self.db.set_kv("revoked", "1")
+        self.revoked = True
+        self.gallery.clear()
+
     def refresh_gallery(self) -> int:
-        """Make the gallery hold exactly the templates of `active` members."""
+        """Make the gallery hold exactly the templates of `active` members (empty when locked)."""
+        if self.locked:
+            self.gallery.clear()
+            return 0
         active = dict(mdb.active_templates(self.db))
         for mid in self.gallery.ids():
             if mid not in active:
@@ -192,6 +262,9 @@ class Hub:
             raise EnrolError(400, "invalid", f"face {index}: crop is over 300 KB")
         if not raw.startswith(b"\xff\xd8"):
             raise EnrolError(400, "invalid", f"face {index}: crop is not a JPEG")
+        size = jpeg_size(raw)
+        if size is None or size[0] * size[1] > MAX_CROP_PIXELS:
+            raise EnrolError(400, "invalid", f"face {index}: crop is too large or not a JPEG")
         img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             raise EnrolError(400, "invalid", f"face {index}: crop does not decode")
@@ -220,6 +293,17 @@ class Hub:
             face_phones = [normalise(f.phone) if f.phone else e164 for f in req.faces]
         except PhoneError as exc:
             raise EnrolError(400, "invalid", str(exc)) from exc
+        if len(req.faces) >= 2:
+            # Each adult's written notice must reach that adult (review M5).
+            payer = req.payer_index if req.payer_index is not None else 0
+            for i, f in enumerate(req.faces):
+                if i != payer and not f.phone:
+                    raise EnrolError(
+                        422,
+                        "phone_required",
+                        f"face {i} needs its own WhatsApp number",
+                        face_index=i,
+                    )
         if req.amount < 0:
             raise EnrolError(400, "invalid", "amount cannot be negative")
 
@@ -229,8 +313,11 @@ class Hub:
             try:
                 self.engine  # noqa: B018 - load the model pack before decoding crops
             except ModelError as exc:
-                raise EnrolError(503, "unavailable", "face models are not installed on the hub "
-                                 "(run `remu-hub models download`)") from exc
+                raise EnrolError(
+                    503,
+                    "unavailable",
+                    "face models are not installed on the hub " "(run `remu-hub models download`)",
+                ) from exc
         # CPU work before taking the database lock.
         accepted: list[tuple[int, NDArray[np.float32]]] = []
         refused: list[dict[str, Any]] = []
@@ -344,7 +431,7 @@ class Hub:
                         "member_id": mid,
                         "consent_record_id": record["id"],
                         "phone_e164": phone_i,
-                        "first_name": name.split(" ")[0] if name else "",
+                        "first_name": name.split(" ")[0] if name else "Member",
                         "shop_name": shop["name"],
                         "language": shop["settings"].get("notice_language", "hi"),
                         "date": ts[:10],
@@ -466,16 +553,18 @@ class Hub:
             for k in allowed & set(changes):
                 self.db.execute(
                     f"UPDATE members SET {k} = ?, updated_at = ? WHERE id = ?",  # noqa: S608
-                    (str(changes[k])[:2000], now_iso(), member_id),
+                    (str(changes[k])[:1000], now_iso(), member_id),
                 )
             mdb.queue_member(self.db, member_id)
         summary = self.member_summary(member_id)
         self.bus.publish("member_updated", summary)
         return summary
 
-    def withdraw(self, member_id: str, channel: str) -> dict[str, Any]:
-        """STOP, Remove member or an inbox withdrawal: template gone at once, chained record."""
-        result = mdb.transition(self.db, member_id, mdb.WITHDRAWN, channel=channel)
+    def withdraw(self, member_id: str, channel: str, actor: str | None = None) -> dict[str, Any]:
+        """STOP, Remove member or an inbox withdrawal: template gone at once, chained record.
+
+        `actor` is the staff id of whoever tapped Remove member; None for STOP and the cloud."""
+        result = mdb.transition(self.db, member_id, mdb.WITHDRAWN, channel=channel, actor=actor)
         self.gallery.remove(member_id)
         self.decider.forget_member(member_id)
         self.clips.delete_for_member(member_id)
@@ -496,6 +585,16 @@ class Hub:
         if row is None or row["status"] != mdb.PENDING or not mdb.has_template(self.db, member_id):
             log.info("activation ignored for %s", member_id)
             return False
+        # Defence in depth: the hub's own chain must already hold the delivered notice, so a
+        # compromised cloud cannot activate a member whose notice never arrived.
+        from remu_hub.db.consent import latest_for_member
+
+        last = latest_for_member(self.db, member_id)
+        if last is None or last["notice_delivery_json"].get("whatsapp_status") != "delivered":
+            self.db.set_kv(f"awaiting_delivery:{member_id}", "1")
+            log.info("activation for %s waits for its delivered notice", member_id)
+            return False
+        self.db.execute("DELETE FROM kv WHERE key = ?", (f"awaiting_delivery:{member_id}",))
         mdb.transition(self.db, member_id, mdb.ACTIVE, channel="whatsapp_webhook")
         self.refresh_gallery()
         self.bus.publish("member_updated", self.member_summary(member_id))
@@ -503,6 +602,8 @@ class Hub:
 
     # ---- gate decisions ------------------------------------------------------------
     def on_decision(self, decision: Decision, frame: TimedFrame) -> None:
+        if self.locked:
+            return
         if decision.kind is Kind.SEEN:
             vdb.touch_seen(self.db, decision.member_id)
             return
@@ -552,11 +653,21 @@ class Hub:
             "uptime_s": int(time.monotonic() - self.started),
             "gallery_size": len(self.gallery),
             "locked": self.locked,
-            "data_dir_encrypted": False,
+            "data_dir_encrypted": os.path.ismount(self.settings.data_dir),
             "internet": self.internet,
             "outbox_pending": counts["pending"],
             "outbox_failed": counts["failed"],
-            "clock_synced": True,
+            "clock_synced": _clock_synced(),
+            "cloud_shop_id": self.cloud_shop_id,
             "fps": round(self.fps, 2),
             "stream": self.stream_state,
         }
+
+
+def _clock_synced() -> bool:
+    from remu_hub.jobs.scheduler import ntp_synchronised
+
+    try:
+        return ntp_synchronised()
+    except OSError:
+        return False

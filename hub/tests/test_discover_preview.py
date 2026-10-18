@@ -73,6 +73,9 @@ def test_discover_route_returns_the_app_shape(tmp_path, monkeypatch) -> None:  #
     client = TestClient(create_app(hub))
     token = client.post("/pair", json={"code": auth.create_hub_code(hub.db)}).json()["app_token"]
     h = {"Authorization": f"Bearer {token}"}
+    auth.add_staff(hub.db, "shop-1", "Owner", "owner", "9999")
+    sess = client.post("/staff/verify-pin", json={"pin": "9999"}, headers=h).json()
+    h = h | {"X-Remu-Staff-Session": sess["staff_session"]}
     seen: list[tuple[str, str]] = []
 
     def fake(subnet: str, user: str, password: str, **_: object) -> list[disc.Candidate]:

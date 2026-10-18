@@ -63,6 +63,11 @@ class Job:
         return local >= slot and (self.last_run is None or self.last_run < slot)
 
 
+def health_event(hub: Hub) -> dict[str, Any]:
+    """GET /health minus cloud_shop_id: the cloud already knows its shop, and validates strictly."""
+    return {k: v for k, v in hub.health().items() if k != "cloud_shop_id"}
+
+
 class Scheduler:
     def __init__(
         self, hub: Hub, client: Any | None = None, ntp: Callable[[], bool] = ntp_synchronised
@@ -72,7 +77,11 @@ class Scheduler:
         five = dt.timedelta(minutes=5)
         self.jobs = [
             Job("delete_templates", lambda now: delete_templates.run(hub, now), every=five),
-            Job("health", lambda now: outbox.enqueue(hub.db, "health", hub.health()), every=five),
+            Job(
+                "health",
+                lambda now: outbox.enqueue(hub.db, "health", health_event(hub)),
+                every=five,
+            ),
             Job(
                 "expire_members",
                 lambda now: expire_members.run(hub, now),

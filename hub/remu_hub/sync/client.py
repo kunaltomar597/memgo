@@ -70,10 +70,13 @@ class CloudClient:
         ).json()
         return body
 
-    def claim(self, pairing_code: str, serial: str) -> dict[str, Any]:
-        r = self._call(
-            "POST", "/api/devices/claim", json={"pairing_code": pairing_code, "serial": serial}
-        )
+    def claim(
+        self, pairing_code: str, serial: str, cert_sha256: str | None = None
+    ) -> dict[str, Any]:
+        body_out: dict[str, Any] = {"pairing_code": pairing_code, "serial": serial}
+        if cert_sha256:
+            body_out["cert_sha256"] = cert_sha256  # lets Owner mode check the pin (review M3)
+        r = self._call("POST", "/api/devices/claim", json=body_out)
         body: dict[str, Any] = r.json()
         return body
 

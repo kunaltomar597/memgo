@@ -96,3 +96,18 @@ def test_gallery_refresh_within_5_seconds(tmp_path: Path, monkeypatch: pytest.Mo
     while mid not in hub.gallery and time.monotonic() < deadline:
         time.sleep(0.05)
     assert mid in hub.gallery
+
+
+def test_no_clip_is_saved_after_a_withdrawal_and_the_sweep_removes_leftovers(
+    tmp_path: Path,
+) -> None:
+    from remu_hub.jobs import delete_templates
+
+    hub = make_hub(tmp_path)
+    vid = _visit(hub, "m_w")
+    kept = hub.clips.save(vid, b"mp4")  # saved while active
+    hub.db.execute("UPDATE members SET status = 'withdrawn' WHERE id = 'm_w'")
+    with pytest.raises(LookupError):
+        hub.clips.save(vid, b"mp4")  # finished after the withdrawal: refused
+    delete_templates.run(hub)
+    assert hub.db.one("SELECT 1 FROM clips WHERE id = ?", (kept,)) is None

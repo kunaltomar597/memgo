@@ -56,6 +56,8 @@ def apply(hub: Hub, message: dict[str, Any]) -> None:
                     "delivered_at": p.get("delivered_at") if status == "delivered" else None,
                 },
             )
+            if status == "delivered" and hub.db.get_kv(f"awaiting_delivery:{mid}"):
+                hub.activate(mid)  # the activation message came first
     elif kind == "thumbs_up":
         mid = str(p["member_id"])
         last = latest_for_member(hub.db, mid)
@@ -83,8 +85,7 @@ def apply(hub: Hub, message: dict[str, Any]) -> None:
     elif kind == "config":
         hub.apply_config(p)
     elif kind == "device_revoked":
-        hub.locked = True
-        hub.gallery.clear()
+        hub.revoke()
         log.error("device revoked by the cloud: matching stopped")
     else:
         log.warning("unknown inbox message type %s", kind)

@@ -121,6 +121,10 @@ def create_hub_code(db: Database) -> str | None:
 
 
 def create_invite(db: Database, minutes: int = 10) -> tuple[str, str]:
+    db.execute(
+        "UPDATE pairing_codes SET used_at = ? WHERE kind = 'invite' AND used_at IS NULL",
+        (now_iso(),),
+    )  # a new invite cancels any older unused one
     code = "".join(secrets.choice("0123456789") for _ in range(6))
     expires = (dt.datetime.now(IST) + dt.timedelta(minutes=minutes)).isoformat(timespec="seconds")
     db.execute(
@@ -150,3 +154,59 @@ def revoke_role(db: Database, role: str) -> int:
         (now_iso(), role),
     )
     return int(cur.rowcount or 0)
+
+
+class StaffSessions:
+    """Short-lived staff sessions from a verified PIN (security review M1).
+
+    Kept in memory only: a hub restart asks staff for their PIN again. The session ties
+    every write to the staff member who entered the PIN, so the consent chain records
+    who enrolled or removed a member.
+    """
+
+    TTL = dt.timedelta(hours=12)
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, tuple[str, dt.datetime]] = {}
+
+    def issue(self, staff_id: str) -> str:
+        token = secrets.token_urlsafe(24)
+        self._prune()
+        self._sessions[sha256(token)] = (staff_id, dt.datetime.now(IST) + self.TTL)
+        return token
+
+    def staff_for(self, token: str | None) -> str | None:
+        if not token:
+            return None
+        entry = self._sessions.get(sha256(token))
+        if entry is None or entry[1] < dt.datetime.now(IST):
+            return None
+        return entry[0]
+
+    def _prune(self) -> None:
+        now = dt.datetime.now(IST)
+        for k in [k for k, (_, exp) in self._sessions.items() if exp < now]:
+            del self._sessions[k]
+
+
+def list_tokens(db: Database) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": r["token_hash"][:12],
+            "role": r["role"],
+            "created_at": r["created_at"],
+            "revoked_at": r["revoked_at"],
+        }
+        for r in db.all("SELECT * FROM app_tokens ORDER BY created_at")
+    ]
+
+
+def revoke_token(db: Database, token_id: str) -> bool:
+    if len(token_id) != 12 or any(c not in "0123456789abcdef" for c in token_id):
+        return False
+    cur = db.execute(
+        "UPDATE app_tokens SET revoked_at = ? WHERE substr(token_hash, 1, 12) = ? "
+        "AND revoked_at IS NULL",
+        (now_iso(), token_id),
+    )
+    return bool(cur.rowcount)

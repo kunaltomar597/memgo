@@ -40,5 +40,12 @@ def run(hub: Hub, now: dt.datetime | None = None) -> int:
                 )
             mdb.queue_member(hub.db, r["id"])
         hub.gallery.remove(r["id"])
+    # Clips of withdrawn or expired members are removed too (review M6).
+    for r in hub.db.all(
+        "SELECT DISTINCT v.member_id FROM clips c JOIN visits v ON v.id = c.visit_id"
+        " JOIN members m ON m.id = v.member_id"
+        " WHERE m.status IN ('withdrawn', 'expired')"
+    ):
+        hub.clips.delete_for_member(r["member_id"])
     hub.db.set_kv("sweep_last_deleted", str(len(rows)))
     return len(rows)

@@ -22,6 +22,7 @@ from remu_hub.db import visits as vdb
 from remu_hub.hub import EnrolError, EnrolIn, FaceIn, Hub
 
 PING_S = 20.0
+MAX_BODY_BYTES = 2_600_000  # six 300 KB crops in base64 plus the form
 
 
 class Strict(BaseModel):
@@ -50,14 +51,14 @@ class FaceModel(Strict):
 
 
 class EnrolModel(Strict):
-    staff_id: str
+    staff_id: str | None = None
     phone: str = Field(max_length=20)
     display_name: str = Field(default="", max_length=80)
     bill_no: str = Field(default="", max_length=60)
     amount: float = Field(default=0.0, ge=0, le=100_000_000)
     items: str = Field(default="", max_length=500)
     occasion: str = Field(default="", max_length=200)
-    notes: str = Field(default="", max_length=2000)
+    notes: str = Field(default="", max_length=1000)
     household_label: str | None = Field(default=None, max_length=80)
     payer_index: int | None = Field(default=None, ge=0, le=5)
     faces: list[FaceModel] = Field(default_factory=list, max_length=6)
@@ -100,7 +101,7 @@ class StreamsIn(Strict):
 
 class VisitPatch(Strict):
     greeted: bool | None = None
-    greeted_by: str | None = None
+    greeted_by: str | None = Field(default=None, pattern=r"^s_[0-9A-HJKMNP-TV-Z]{26}$")
     not_them: bool | None = None
 
 
@@ -127,6 +128,10 @@ class RateLimiter:
         self.hits: dict[str, deque[float]] = defaultdict(deque)
 
     def blocked(self, key: str) -> bool:
+        if len(self.hits) > 10_000:  # bounded memory: forget keys with no recent hits
+            now = time.monotonic()
+            for k in [k for k, v in self.hits.items() if not v or now - v[-1] > self.window]:
+                del self.hits[k]
         q = self.hits[key]
         now = time.monotonic()
         while q and now - q[0] > self.window:
@@ -140,6 +145,7 @@ class RateLimiter:
 def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="Remu hub", version="0.1.0", docs_url=None, redoc_url=None)
     pair_limiter = RateLimiter(5, 60.0)
+    shop_limiter = RateLimiter(20, 60.0)  # wrong codes or PINs per minute for the whole hub
     cert_fp = fingerprint(cert_path) if cert_path and cert_path.exists() else ""
 
     def role(authorization: Annotated[str | None, Header()] = None) -> str:
@@ -168,9 +174,22 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
 
     Role = Annotated[str, Depends(limited)]
     Owner = Annotated[str, Depends(owner)]
+    sessions = auth.StaffSessions()
+
+    def staff(r: Role, x_remu_staff_session: Annotated[str | None, Header()] = None) -> str:
+        """The staff id behind a PIN-verified session (security review M1)."""
+        del r
+        sid = sessions.staff_for(x_remu_staff_session)
+        if sid is None or hub.db.one("SELECT 1 FROM staff WHERE id = ?", (sid,)) is None:
+            raise HTTPException(401, "staff_session_required")
+        return sid
+
+    Staff = Annotated[str, Depends(staff)]
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+        if exc.detail == "staff_session_required":
+            return error(401, "staff_session_required", "enter your PIN again")
         code = {
             401: "unauthorized",
             403: "forbidden",
@@ -192,7 +211,13 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def headers(request: Request, call_next: Any) -> Response:
-        response: Response = await call_next(request)
+        length = request.headers.get("content-length")
+        if length is not None and (not length.isdigit() or int(length) > MAX_BODY_BYTES):
+            return error(413, "invalid", "request body too large")
+        if hub.locked and request.url.path != "/health":
+            response: Response = error(423, "locked", "hub is locked; ask Remu support")
+        else:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -205,11 +230,12 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
     @app.post("/pair")
     def pair(body: PairIn, request: Request) -> Any:
         client = request.client.host if request.client else "unknown"
-        if pair_limiter.blocked(client):
+        if pair_limiter.blocked(client) or shop_limiter.blocked("pair"):
             return error(429, "rate_limited", "too many wrong codes, wait a minute")
         granted = auth.redeem_code(hub.db, body.code)
         if granted is None:
             pair_limiter.hit(client)
+            shop_limiter.hit("pair")  # a 6-digit invite must not be guessable from many addresses
             return error(401, "unauthorized", "wrong or used code")
         if granted == "owner":
             auth.revoke_role(hub.db, "owner")  # re-pairing replaces the old owner phone
@@ -222,17 +248,34 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         }
 
     @app.post("/pair/invite")
-    def invite(_: Owner) -> dict[str, str]:
+    def invite(_: Owner, __: Staff) -> dict[str, str]:
         code, expires = auth.create_invite(hub.db)
         return {"invite_code": code, "expires_at": expires}
 
     @app.post("/staff", status_code=201)
-    def staff_add(body: StaffIn, _: Owner) -> Any:
+    def staff_add(
+        body: StaffIn,
+        _: Owner,
+        x_remu_staff_session: Annotated[str | None, Header()] = None,
+    ) -> Any:
+        first_owner = hub.db.one("SELECT 1 FROM staff") is None
+        if not first_owner and sessions.staff_for(x_remu_staff_session) is None:
+            return error(401, "staff_session_required", "enter your PIN again")
         try:
             sid = auth.add_staff(hub.db, hub.settings.shop_id, body.name, body.role, body.pin)
         except ValueError as exc:
             return error(400, "invalid", str(exc))
         return {"staff_id": sid}
+
+    @app.get("/tokens")
+    def tokens(_: Owner) -> list[dict[str, Any]]:
+        return auth.list_tokens(hub.db)
+
+    @app.post("/tokens/{token_id}/revoke")
+    def token_revoke(token_id: str, _: Owner, __: Staff) -> Any:
+        if not auth.revoke_token(hub.db, token_id):
+            return error(404, "not_found", "no such active token")
+        return {"status": "revoked"}
 
     @app.get("/staff")
     def staff_list(_: Role) -> list[dict[str, Any]]:
@@ -241,18 +284,21 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
     @app.post("/staff/verify-pin")
     def verify_pin(body: PinIn, _: Role, request: Request) -> Any:
         key = "pin:" + (request.client.host if request.client else "unknown")
-        if pair_limiter.blocked(key):
+        if pair_limiter.blocked(key) or shop_limiter.blocked("pin"):
             return error(429, "rate_limited", "too many wrong PINs, wait a minute")
         found = auth.verify_pin(hub.db, body.pin)
         if found is None:
             pair_limiter.hit(key)
+            shop_limiter.hit("pin")
             return error(401, "unauthorized", "wrong PIN")
-        return found
+        return found | {"staff_session": sessions.issue(found["staff_id"])}
 
     @app.post("/enrol", status_code=201)
-    def enrol(body: EnrolModel, _: Role) -> Any:
+    def enrol(body: EnrolModel, sid: Staff) -> Any:
+        if body.staff_id and body.staff_id != sid:
+            return error(400, "invalid", "staff_id does not match the PIN session")
         req = EnrolIn(
-            **body.model_dump(exclude={"faces"}),
+            **(body.model_dump(exclude={"faces"}) | {"staff_id": sid}),
             faces=[FaceIn(**f.model_dump()) for f in body.faces],
         )
         try:
@@ -271,7 +317,7 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         return hub.member_card(member_id)
 
     @app.patch("/members/{member_id}")
-    async def member_patch(member_id: str, request: Request, _: Role) -> Any:
+    async def member_patch(member_id: str, request: Request, _: Staff) -> Any:
         body = await request.json()
         if not isinstance(body, dict):
             return error(400, "invalid", "body must be an object")
@@ -281,14 +327,16 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
             return error(400, "invalid", str(exc))
 
     @app.post("/members/{member_id}/remove")
-    def member_remove(member_id: str, body: RemoveIn, _: Role) -> Any:
+    def member_remove(member_id: str, body: RemoveIn, sid: Staff) -> Any:
+        if body.staff_id and body.staff_id != sid:
+            return error(400, "invalid", "staff_id does not match the PIN session")
         try:
-            return hub.withdraw(member_id, "owner_remove")
+            return hub.withdraw(member_id, "owner_remove", actor=sid)
         except mdb.InvalidTransition as exc:
             return error(409, "conflict", str(exc))
 
     @app.post("/members/{member_id}/purchases", status_code=201)
-    def member_purchase(member_id: str, body: PurchaseIn, _: Role) -> Any:
+    def member_purchase(member_id: str, body: PurchaseIn, _: Staff) -> Any:
         hub.member_summary(member_id)
         return mdb.add_purchase(
             hub.db,
@@ -300,7 +348,7 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         )
 
     @app.post("/households", status_code=201)
-    def household_create(body: HouseholdIn, _: Role) -> Any:
+    def household_create(body: HouseholdIn, _: Staff) -> Any:
         try:
             hid = mdb.create_household(
                 hub.db, hub.settings.shop_id, body.label, body.member_ids, body.payer_member_id
@@ -312,7 +360,7 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         return {"id": hid}
 
     @app.patch("/households/{household_id}")
-    def household_patch(household_id: str, body: HouseholdPatch, _: Role) -> Any:
+    def household_patch(household_id: str, body: HouseholdPatch, _: Staff) -> Any:
         db = hub.db
         try:
             with db.tx():
@@ -359,7 +407,9 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         return vdb.list_visits(hub.db, member_id)
 
     @app.patch("/visits/{visit_id}")
-    def visit_patch(visit_id: str, body: VisitPatch, _: Role) -> dict[str, Any]:
+    def visit_patch(visit_id: str, body: VisitPatch, sid: Staff) -> Any:
+        if body.greeted_by is not None and body.greeted_by != sid:
+            return error(400, "invalid", "greeted_by must be the staff member of this session")
         fb = vdb.set_feedback(
             hub.db,
             visit_id,
@@ -371,7 +421,7 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         return fb
 
     @app.get("/clips/{clip_id}")
-    def clip(clip_id: str, request: Request, _: Role) -> Response:
+    def clip(clip_id: str, request: Request, _: Owner) -> Response:
         if not is_lan(request.client.host if request.client else None):
             return error(403, "forbidden", "clips play only on the shop network")
         return Response(hub.clips.read(clip_id), media_type="video/mp4")
@@ -414,18 +464,23 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
         import os
 
         user = hub.db.get_kv("dvr_user") or os.environ.get("REMU_DVR_USER") or "admin"
-        password = hub.db.get_kv("dvr_password") or os.environ.get("REMU_DVR_PASSWORD") or ""
+        sealed = hub.db.get_kv("dvr_password")
+        password = (
+            (hub.open_secret(sealed) if sealed else None)
+            or os.environ.get("REMU_DVR_PASSWORD")
+            or ""
+        )
         return run_discovery(user, password, None)
 
     @app.post("/discover")
-    def discover_streams(body: DiscoverIn, _: Owner) -> dict[str, Any]:
+    def discover_streams(body: DiscoverIn, _: Owner, __: Staff) -> dict[str, Any]:
         """Runs discovery with the DVR login in the body and keeps it for GET /discover."""
         hub.db.set_kv("dvr_user", body.user)
-        hub.db.set_kv("dvr_password", body.password)
+        hub.db.set_kv("dvr_password", hub.seal_secret(body.password))
         return run_discovery(body.user, body.password, body.subnet)
 
     @app.put("/settings/streams")
-    def save_streams(body: StreamsIn, _: Owner) -> dict[str, str]:
+    def save_streams(body: StreamsIn, _: Owner, __: Staff) -> dict[str, str]:
         if not body.gate_url.startswith("rtsp://"):
             raise HTTPException(400, "gate_url must be an rtsp:// URL")
         hub.db.set_kv("rtsp_gate_url", body.gate_url)
@@ -467,8 +522,12 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
             await socket.close(code=4401)
             return
         token = first.get("token") if isinstance(first, dict) else None
-        if not isinstance(token, str) or auth.token_role(hub.db, token) is None:
+        # Alerts carry names, notes and purchases: Owner mode only (docs/SECURITY.md section 2).
+        if not isinstance(token, str) or auth.token_role(hub.db, token) != "owner":
             await socket.close(code=4401)
+            return
+        if hub.locked:
+            await socket.close(code=4423)
             return
         queue = hub.bus.subscribe()
         try:

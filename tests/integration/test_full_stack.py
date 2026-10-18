@@ -32,6 +32,7 @@ from typing import Any, ClassVar
 import httpx
 import pytest
 
+from remu_hub.api.tls import ensure_cert, fingerprint
 from remu_hub.db import auth
 from remu_hub.db.consent import verify_chain
 from remu_hub.export import consent_csv
@@ -251,6 +252,7 @@ def test_notice_to_active_stop_and_export(stack: dict[str, Any], tmp_path: Path)
     )
     hub = Hub(settings, engine_factory=FakeEngine)
     hub.db.execute("UPDATE shops SET name = 'Sharma Jewellers' WHERE id = ?", (shop_id,))
+    cert, _ = ensure_cert(settings.certs_dir)
     code = auth.create_hub_code(hub.db)
     assert code
     (settings.state_dir / "pairing.txt").write_text(code + "\n")
@@ -270,6 +272,9 @@ def test_notice_to_active_stop_and_export(stack: dict[str, Any], tmp_path: Path)
     assert paired.status_code in (200, 201), paired.text
     worker.cycle()
     assert worker.client.device_token, "hub did not receive its device token"
+    devices = httpx.get(base + f"/api/shops/{shop_id}/devices", headers=owner).json()
+    assert devices[0]["cert_sha256"] == fingerprint(cert)  # review M3: Owner mode can compare
+    assert hub.health()["cloud_shop_id"] == shop_id  # review M7
 
     staff = auth.add_staff(hub.db, shop_id, "Ravi", "cashier", "4821")
     mid = hub.enrol(

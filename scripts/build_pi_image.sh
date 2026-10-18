@@ -33,27 +33,25 @@ install -m 0644 "$DEPLOY/remu-hub-jobs.service" /etc/systemd/system/remu-hub-job
 # mDNS name for the app: remu-hub.local
 hostnamectl set-hostname remu-hub
 
-cat >/usr/local/sbin/remu-firstboot <<'FIRSTBOOT'
-#!/usr/bin/env bash
-# First boot: shop key, certificate and pairing code. Runs once, then disables itself.
-set -euo pipefail
-export REMU_SHOP_KEY_PATH=/etc/remu/shop.key REMU_STATE_DIR=/var/lib/remu/state
-set -a; . /etc/remu/hub.env; set +a
-/opt/remu/venv/bin/remu-hub init
-chown -R remu:remu /var/lib/remu
-/opt/remu/venv/bin/remu-hub models download
-systemctl disable remu-firstboot.service
-FIRSTBOOT
-chmod 0755 /usr/local/sbin/remu-firstboot
+# First boot: shop key, LAN certificate and pairing code only. The data directory stays
+# empty until `remu-hub unlock` (ExecStartPre) has claimed the hub and opened the LUKS volume.
+# hub.env is read by systemd (EnvironmentFile), never sourced by a shell.
+install -d -o root -g root -m 0755 /opt/remu/models
 cat >/etc/systemd/system/remu-firstboot.service <<'UNIT'
 [Unit]
 Description=Remu hub first boot
 After=network-online.target
 Wants=network-online.target
 Before=remu-hub.service
+ConditionPathExists=!/etc/remu/shop.key
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/remu-firstboot
+EnvironmentFile=/etc/remu/hub.env
+Environment=REMU_SHOP_KEY_PATH=/etc/remu/shop.key
+Environment=REMU_STATE_DIR=/var/lib/remu/state
+ExecStart=/opt/remu/venv/bin/remu-hub init --state-only
+ExecStart=/opt/remu/venv/bin/remu-hub models download
+ExecStart=/bin/chown -R remu:remu /var/lib/remu/state
 [Install]
 WantedBy=multi-user.target
 UNIT
