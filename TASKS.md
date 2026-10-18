@@ -541,10 +541,14 @@ Phase 7 exit check: a Pi from the image pairs, unlocks, discovers the DVR, match
 
 ## Phase 8: Hardening: security review, offline mode, monitoring, QA
 
-- [ ] TASK-112 [all] Security review
+- [x] TASK-112 [all] Security review
   - The checklist in docs/SECURITY.md is run item by item on hub, app and cloud; each finding gets a severity; high findings are fixed in this task and the rest are listed as sub-bullets here.
   - The threat model table (stolen hub, stolen counter phone, rogue cashier, cloud breach, WhatsApp number takeover) is updated with what the build does today.
-  - Status 2026-10-18: review run on 2026-10-18; findings and fixes are listed under this task.
+  - Status 2026-10-18: independent review done. 7 high, 7 medium and about 15 low findings. Every high is fixed with a regression test, and the as-built threat model is in docs/SECURITY.md section 13.
+    - High, fixed: sync freeze from one long text (H1); revoke not stopping an online hub (H2); Sentry local variables (H3); systemd watchdog never ready, so the jobs service never started (H4); encrypted data directory not wired up (H5); phone numbers in the access log (H6); counter tokens reading clips and alerts (H7).
+    - Medium, fixed: staff attribution through PIN sessions (M1); token revocation (M2); certificate cross-check through the cloud (M3); cloud phone retention (M4); a household adult's notice going to the payer (M5); clips after withdrawal (M6); a hub claimed by another shop shown in health (M7).
+    - Medium, open: the pending window for undelivered notices (lawyer).
+    - Low, open: pairing codes stored with a plain hash in the cloud; trust on first use during LAN pairing.
 - [x] TASK-113 [cloud] RLS and secrets audit
   - Automated tests prove a shop's user cannot read, insert or update another shop's rows in any mirrored table; `SUPABASE_SERVICE_ROLE_KEY` appears only in server code (a search test).
   - Webhook signature, device token and owner session checks are covered by negative tests.

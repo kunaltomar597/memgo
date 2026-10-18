@@ -149,3 +149,22 @@ The one-hour clock starts when the withdrawal reaches the hub. A Remove member t
 | Keep data in India (founder decision) | Supabase Mumbai (ap-south-1), Vercel bom1; exceptions in section 3.3 |
 
 Review at the end of Phase 8 and after every incident.
+
+## 13. Security review of 2026-10-18 (TASK-112): what the build does today
+
+An independent review read the hub, the cloud and the app against this document. It found 7 high, 7 medium and about 15 low findings. The fixes are in the commits tagged TASK-112, and each has a regression test (`hub/tests/test_security_review.py`, `cloud/test/securityReview.test.ts`, and the app's tests).
+
+| Threat | As built after the fixes |
+|---|---|
+| Stolen hub | On the Pi the data directory is a LUKS volume opened only with the cloud's unlock token. The hub refuses to serve from a plain folder. The shop key, device token and LAN certificate sit outside the volume (ADR-029), so a copied card can still fetch an unlock token until the owner revokes the device. Revoke now stops matching and every LAN route at once and survives a restart. |
+| Stolen counter phone | The token is Keystore-encrypted and never backed up. Every write needs a PIN-verified staff session that lives only in memory. Counter tokens cannot read clips or alerts, and the owner can revoke any paired phone from Owner mode. |
+| Rogue cashier | Enrolments and removals are attributed to the PIN session in the consent chain. A cashier cannot pull clips or the alert stream, and cannot freeze sync with long text, because free text is capped and the hub splits a rejected batch. Enrolling a stranger's face against the cashier's own number is still possible. The written notice goes to that number, so the owner's review of Not them and the consent export are the controls. |
+| Cloud breach | No template, crop or clip is ever in the cloud. Plain phone numbers are cleared once a notice reaches a final status and on withdrawal, and raw webhook JSON holds only phone hashes. A cloud that queues a false activation is refused unless the hub's own chain already records the delivered notice. |
+| WhatsApp number takeover | A new holder of a member's number receives later notices and can send STOP, which withdraws safely. With the Meta app secret an attacker could forge signed delivery webhooks; the hub's own chain check limits this to members whose delivery the cloud also forged. |
+
+Still open after the review:
+
+- OPEN: the pending window for notices that never deliver (templates of `pending_notice` members are kept until withdrawn).
+- OPEN: pairing codes are stored in the cloud as plain SHA-256. A keyed hash with `HUB_PAIRING_SECRET` would resist offline guessing after a database leak.
+- First pairing is still trust on first use on the LAN. The cloud cross-check catches a man in the middle afterwards, not during pairing.
+- The webhook rate limit is per Vercel function instance. It guards against floods, not an exact quota.
