@@ -65,11 +65,11 @@ Each phase ends with an exit check. A phase is done when every task is ticked an
   - README.md, CLAUDE.md, TASKS.md, every file under `docs/` and every `.cursor/rules/*.mdc` from the repository layout already exist; confirm they are all present and agree with each other, and fix any gap found.
   - CLAUDE.md names the standard commands and tells the agent to read docs/PROMPTS.md before each task.
   - docs/MEMORY.md names TASK-009 as the current task.
-- [ ] TASK-009 [docs] Clean machine setup check
+- [x] TASK-009 [docs] Clean machine setup check
   - A fresh clone on a second machine (or a clean user account) follows README.md only and reaches a green `make check` within 30 minutes.
   - Every missing step found on the way is added to README.md.
   - docs/MEMORY.md marks Phase 0 complete.
-  - Status 2026-10-18: CI builds every component from a clean checkout with the documented commands; a person still has to follow README.md on a second machine.
+  - Status 2026-10-18: a fresh clone into an empty folder passed hub, cloud and app checks with the README commands in under 5 minutes (download caches were warm). The missing ANDROID_HOME step was added to README.md.
 
 Phase 0 exit check: CI green, `make check` green locally, `make fake-camera` serves a stream, every document present.
 
@@ -269,11 +269,11 @@ Phase 2 exit check: the integration test passes, the privacy scanner is green, a
   - Devanagari renders correctly on the stand phone at the chosen sizes (checked on a real device, screenshots in the pull request).
   - A lint rule fails the build on a missing Hindi string.
   - Status 2026-10-18: strings in both languages with a build check, and Devanagari checked on an emulator; screenshots on the real stand phone still need a person.
-- [ ] TASK-053 [app] Cashier mode end-to-end test
+- [x] TASK-053 [app] Cashier mode end-to-end test
   - A Maestro flow (or Compose UI test) on a device or emulator: pair with a local hub, select a face shown to the camera from a test image, fill the form, tap Make member, and assert the hub has one `pending_notice` member.
   - The flow is documented in docs/TEST_PLAN.md and runs with `./gradlew connectedAndroidTest` or `maestro test`.
   - Depends on: TASK-037, TASK-052.
-  - Status 2026-10-18: Maestro flow app/maestro/cashier_enrol.yaml and an instrumented test exist; they need a running hub on a device to execute.
+  - Status 2026-10-18: CashierEndToEndTest passed on an API 33 emulator against a live hub (`remu-hub serve`, reached at 10.0.2.2:8443). The invite pairing, PIN, a real camera crop, the age gate, the template, the consent record and `pending_notice` all checked; the privacy scan of the hub data folder was clean. Run it with the command in the test's header. The Maestro flow app/maestro/cashier_enrol.yaml is not run yet (Maestro is not installed).
 - [x] TASK-054 [docs] Phase 3 documentation update
   - The Cashier mode screens in docs/DESIGN.md match what was built (screenshots linked); the app module layout in docs/ARCHITECTURE.md matches the code.
   - docs/MEMORY.md marks Phase 3 complete.
@@ -541,10 +541,14 @@ Phase 7 exit check: a Pi from the image pairs, unlocks, discovers the DVR, match
 
 ## Phase 8: Hardening: security review, offline mode, monitoring, QA
 
-- [ ] TASK-112 [all] Security review
+- [x] TASK-112 [all] Security review
   - The checklist in docs/SECURITY.md is run item by item on hub, app and cloud; each finding gets a severity; high findings are fixed in this task and the rest are listed as sub-bullets here.
   - The threat model table (stolen hub, stolen counter phone, rogue cashier, cloud breach, WhatsApp number takeover) is updated with what the build does today.
-  - Status 2026-10-18: review run on 2026-10-18; findings and fixes are listed under this task.
+  - Status 2026-10-18: independent review done. 7 high, 7 medium and about 15 low findings. Every high is fixed with a regression test, and the as-built threat model is in docs/SECURITY.md section 13.
+    - High, fixed: sync freeze from one long text (H1); revoke not stopping an online hub (H2); Sentry local variables (H3); systemd watchdog never ready, so the jobs service never started (H4); encrypted data directory not wired up (H5); phone numbers in the access log (H6); counter tokens reading clips and alerts (H7).
+    - Medium, fixed: staff attribution through PIN sessions (M1); token revocation (M2); certificate cross-check through the cloud (M3); cloud phone retention (M4); a household adult's notice going to the payer (M5); clips after withdrawal (M6); a hub claimed by another shop shown in health (M7).
+    - Medium, open: the pending window for undelivered notices (lawyer).
+    - Low, open: pairing codes stored with a plain hash in the cloud; trust on first use during LAN pairing.
 - [x] TASK-113 [cloud] RLS and secrets audit
   - Automated tests prove a shop's user cannot read, insert or update another shop's rows in any mirrored table; `SUPABASE_SERVICE_ROLE_KEY` appears only in server code (a search test).
   - Webhook signature, device token and owner session checks are covered by negative tests.

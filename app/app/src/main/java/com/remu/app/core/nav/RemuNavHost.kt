@@ -57,6 +57,8 @@ import com.remu.app.feature.settings.InviteViewModel
 import com.remu.app.feature.settings.OwnerSettingsScreen
 import com.remu.app.feature.settings.StaffScreen
 import com.remu.app.feature.settings.StaffViewModel
+import com.remu.app.feature.settings.TokensScreen
+import com.remu.app.feature.settings.TokensViewModel
 import com.remu.app.feature.setup.SetupScreen
 import com.remu.app.feature.setup.SetupViewModel
 import com.remu.app.network.hub.HubDiscovery
@@ -83,6 +85,7 @@ object Routes {
     const val DEVICE = "device"
     const val EXPORT = "export"
     const val INVITE = "invite"
+    const val TOKENS = "tokens"
 
     fun pair(kind: PairKind) = "pair/${kind.name}"
     fun ownerSignIn(setup: Boolean) = "owner_signin/$setup"
@@ -93,7 +96,7 @@ object Routes {
     fun alert(visitId: String, memberId: String) = "alert/${Uri.encode(visitId)}/${Uri.encode(memberId)}"
 
     /** Routes that need a staff PIN session. */
-    val protected = setOf(CASHIER, CASHIER_SETTINGS, MEMBERS, MEMBER, HOUSEHOLD, OWNER_HOME, ALERT, OWNER_SETTINGS, STAFF, DEVICE, EXPORT, INVITE)
+    val protected = setOf(CASHIER, CASHIER_SETTINGS, MEMBERS, MEMBER, HOUSEHOLD, OWNER_HOME, ALERT, OWNER_SETTINGS, STAFF, DEVICE, EXPORT, INVITE, TOKENS)
 }
 
 private fun NavHostController.resetTo(route: String) = navigate(route) { popUpTo(0) { inclusive = true }; launchSingleTop = true }
@@ -231,8 +234,10 @@ fun RemuNavHost(c: AppContainer, pendingAlert: StateFlow<PendingAlert?>? = null,
                     onExport = { nav.navigate(Routes.EXPORT) },
                     onInvite = { nav.navigate(Routes.INVITE) },
                     onSignedOut = { nav.resetTo(Routes.LOGIN) },
+                    onPairedPhones = { nav.navigate(Routes.TOKENS) },
                 )
             }
+            composable(Routes.TOKENS) { TokensScreen(remuViewModel { TokensViewModel(c) }, onBack = { nav.popBackStack() }) }
             composable(Routes.STAFF) { StaffScreen(remuViewModel { StaffViewModel(c) }, onBack = { nav.popBackStack() }) }
             composable(Routes.DEVICE) {
                 DeviceStatusScreen(remuViewModel { DeviceStatusViewModel(c) }, onBack = { nav.popBackStack() }, onPairHub = { nav.navigate(Routes.pair(PairKind.OWNER)) })

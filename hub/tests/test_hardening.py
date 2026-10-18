@@ -144,6 +144,8 @@ def test_enrol_limits(tmp_path: Path, n: int) -> None:
     token = client.post("/pair", json={"code": auth.create_hub_code(hub.db)}).json()["app_token"]
     h = {"Authorization": f"Bearer {token}"}
     staff = auth.add_staff(hub.db, "shop-1", "Ravi", "cashier", "4821")
+    sess = client.post("/staff/verify-pin", json={"pin": "4821"}, headers=h).json()
+    h = h | {"X-Remu-Staff-Session": sess["staff_session"]}
     seven = {"staff_id": staff, "phone": "9876543210", "faces": [face()] * 7}
     assert client.post("/enrol", json=seven, headers=h).status_code == 400
     big = {"staff_id": staff, "phone": "9876543210", "faces": [{"crop_jpeg_b64": "A" * 500_000}]}

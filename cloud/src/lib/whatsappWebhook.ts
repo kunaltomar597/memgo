@@ -8,12 +8,15 @@ import { log } from "./log";
 import { activateOnDelivery, transition } from "./memberState";
 import { e164FromWhatsApp, phoneHash as hashPhone } from "./phone";
 import { toIstIso, unixSecondsToDate } from "./time";
+import { redactInbound } from "./waRedact";
 import { THUMBS_UP } from "./whatsapp";
 
 /**
  * WhatsApp webhooks (TASK-064 to TASK-066). The signature is checked over the raw body before
  * anything is parsed. Statuses update whatsapp_messages; only `delivered` activates a member.
  * A thumbs-up button reply queues thumbs_up; a text "STOP" withdraws the sender's members.
+ * Retention (TASK-112): phone_e164 is cleared once a send reaches delivered, read or failed, and raw
+ * JSON is stored with numbers replaced by phone_hash and no text body other than a STOP.
  */
 export function verifySignature(rawBody: string, header: string | null, appSecret: string): boolean {
   if (!header) return false;
@@ -89,7 +92,7 @@ async function handleStatus(deps: Deps, s: WaStatus): Promise<void> {
     switch (s.status) {
       case "sent": {
         await tx.query(
-          "update whatsapp_messages set sent_at = coalesce(sent_at, $2::timestamptz), status = $3, status_ts = $2::timestamptz where id = $1::bigint",
+          "update whatsapp_messages set sent_at = coalesce(sent_at, $2::timestamptz), status = $3, status_ts = $2::timestamptz, updated_at = now() where id = $1::bigint",
           [row.id, at.toISOString(), raise("sent")],
         );
         break;
@@ -99,7 +102,7 @@ async function handleStatus(deps: Deps, s: WaStatus): Promise<void> {
         const seconds = await deliverySeconds(tx, row.consent_record_id, row.created_at, at);
         await tx.query(
           `update whatsapp_messages set delivered_at = $2::timestamptz, status = $3, status_ts = $2::timestamptz,
-             delivery_seconds = $4 where id = $1::bigint`,
+             delivery_seconds = $4, phone_e164 = null, updated_at = now() where id = $1::bigint`,
           [row.id, at.toISOString(), raise("delivered"), seconds],
         );
         if (row.member_id && row.shop_id) {
@@ -127,7 +130,7 @@ async function handleStatus(deps: Deps, s: WaStatus): Promise<void> {
       case "read": {
         if (row.read_at) return;
         await tx.query(
-          "update whatsapp_messages set read_at = $2::timestamptz, status = $3, status_ts = $2::timestamptz where id = $1::bigint",
+          "update whatsapp_messages set read_at = $2::timestamptz, status = $3, status_ts = $2::timestamptz, phone_e164 = null, updated_at = now() where id = $1::bigint",
           [row.id, at.toISOString(), raise("read")],
         );
         if (row.member_id && row.shop_id) {
@@ -147,7 +150,7 @@ async function handleStatus(deps: Deps, s: WaStatus): Promise<void> {
         const code = s.errors?.[0]?.code;
         await tx.query(
           `update whatsapp_messages set failed_at = $2::timestamptz, status = case when delivered_at is null then 'failed' else status end,
-             status_ts = $2::timestamptz, last_error_code = $3 where id = $1::bigint`,
+             status_ts = $2::timestamptz, last_error_code = $3, phone_e164 = null, updated_at = now() where id = $1::bigint`,
           [row.id, at.toISOString(), code === undefined ? null : String(code)],
         );
         if (row.member_id && row.shop_id && !row.delivered_at) {
@@ -167,7 +170,7 @@ async function handleStatus(deps: Deps, s: WaStatus): Promise<void> {
       default:
         return;
     }
-    await appendRaw(tx, row.id, s);
+    await appendRaw(tx, row.id, s); // numbers replaced by phone_hash inside appendRaw
   });
 }
 
@@ -200,8 +203,9 @@ async function handleInbound(deps: Deps, msg: WaMessage): Promise<void> {
   if (!/^\+?[1-9]\d{7,14}$/.test(msg.from)) return;
   const phoneHash = hashPhone(e164FromWhatsApp(msg.from));
   const kind = isThumbsUp(msg) ? "thumbs_up" : isStop(msg) ? "stop" : msg.type === "text" ? "text" : "other";
-  // Media and other message types are reduced to type and id: the cloud keeps no media references.
-  const raw = kind === "other" ? { id: msg.id, type: msg.type ?? null, timestamp: msg.timestamp } : msg;
+  // A STOP is kept with its numbers hashed; other text and button replies keep type, id, timestamp,
+  // hashed sender and quoted wamid only; media is reduced to type and id (no media references).
+  const raw = redactInbound(msg, kind);
 
   await deps.db.tx(async (tx) => {
     const inserted = await tx.query<{ id: string }>(

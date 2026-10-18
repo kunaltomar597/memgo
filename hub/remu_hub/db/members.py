@@ -148,7 +148,13 @@ def active_templates(db: Database) -> list[tuple[str, NDArray[np.float32]]]:
 
 
 def transition(
-    db: Database, member_id: str, to: str, *, channel: str, ts: str | None = None
+    db: Database,
+    member_id: str,
+    to: str,
+    *,
+    channel: str,
+    ts: str | None = None,
+    actor: str | None = None,
 ) -> TransitionResult:
     """Move a member to `to`. Terminal states are never left. Idempotent for a repeat."""
     ts = ts or now_iso()
@@ -176,6 +182,7 @@ def transition(
                     ts=ts,
                     withdrawn_at=ts if to == WITHDRAWN else None,
                     template_deleted_at=deleted_at,
+                    actor=actor,
                 )
         queue_member(db, member_id)
     return TransitionResult(member_id, old, to, deleted_at, True)

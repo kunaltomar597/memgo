@@ -21,6 +21,8 @@ data class HubHealth(
     @SerialName("clock_synced") val clockSynced: Boolean? = null,
     val fps: Double? = null,
     val stream: String? = null,
+    /** Null until the hub is claimed, then the cloud shop id (docs/API_CONTRACT.md 7.6). */
+    @SerialName("cloud_shop_id") val cloudShopId: String? = null,
 )
 
 @Serializable data class PairRequest(val code: String)
@@ -57,6 +59,17 @@ data class VerifiedStaff(
     @SerialName("staff_id") val staffId: String,
     val name: String,
     val role: String,
+    /** Opaque, valid 12 hours; kept in memory only and sent on every hub write (contract 7.1). */
+    @SerialName("staff_session") val staffSession: String? = null,
+)
+
+/** One app token from `GET /tokens` (owner). [id] is the first 12 hex characters of its hash. */
+@Serializable
+data class HubToken(
+    val id: String,
+    val role: String,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("revoked_at") val revokedAt: String? = null,
 )
 
 @Serializable
@@ -111,6 +124,8 @@ data class EnrolErrorBody(
     val detail: String? = null,
     @SerialName("member_id") val memberId: String? = null,
     val refused: List<RefusedFace> = emptyList(),
+    /** With 422 `phone_required`: the face that needs its own phone (contract 7.5). */
+    @SerialName("face_index") val faceIndex: Int? = null,
 )
 
 @Serializable

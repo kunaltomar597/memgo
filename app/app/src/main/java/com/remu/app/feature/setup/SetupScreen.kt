@@ -76,6 +76,9 @@ private fun setupErrorText(e: SetupError): String = when (e) {
     SetupError.PIN_MISMATCH -> stringResource(R.string.error_pin_mismatch)
     SetupError.NAME -> stringResource(R.string.error_name_empty)
     SetupError.NO_STREAMS -> stringResource(R.string.setup_stream_empty)
+    SetupError.PIN_WRONG -> stringResource(R.string.login_wrong_pin)
+    SetupError.NOT_OWNER_PIN -> stringResource(R.string.login_owner_needs_owner_pin)
+    SetupError.HUB_LOCKED -> stringResource(R.string.banner_hub_locked_support)
 }
 
 @Composable
@@ -90,9 +93,19 @@ fun SetupScreen(vm: SetupViewModel, invite: () -> InviteViewModel, c: AppContain
             RemuText(stringResource(R.string.setup_step, s.step.ordinal + 1, SetupStep.entries.size), style = RemuType.caption, color = colors.muted, modifier = Modifier.testTag("setup_step"))
             RemuText(stringResource(R.string.setup_elapsed, s.elapsedMin), style = RemuType.caption, color = colors.muted, modifier = Modifier.testTag("setup_elapsed"))
             RemuText(stepTitle(s.step), style = RemuType.screenTitle, modifier = Modifier.testTag("setup_title_${s.step.name}"))
+            when (s.claim) {
+                HubClaim.THIS_SHOP -> RemuText(stringResource(R.string.device_claimed_this_shop), style = RemuType.caption, color = colors.success, modifier = Modifier.testTag("setup_claim_this"))
+                HubClaim.UNCLAIMED -> RemuText(stringResource(R.string.device_not_claimed), style = RemuType.caption, color = colors.muted, modifier = Modifier.testTag("setup_claim_none"))
+                HubClaim.OTHER_SHOP -> RemuText(stringResource(R.string.hub_other_shop), style = RemuType.caption, color = colors.danger, modifier = Modifier.testTag("setup_claim_other"))
+                null -> Unit
+            }
             s.error?.let { InlineError(setupErrorText(it), null) }
-            s.pairError?.let { InlineError(pairErrorText(it), null) }
-            when (s.step) {
+            s.pairError?.let { Box(Modifier.testTag("setup_pair_error")) { InlineError(pairErrorText(it), null) } }
+            if (s.needsOwnerLogin) {
+                RemuText(stringResource(R.string.setup_owner_pin_enter), style = RemuType.section, modifier = Modifier.testTag("setup_owner_login"))
+                RemuField(s.pin, { v -> vm.update { it.copy(pin = v.filter(Char::isDigit).take(6)) } }, stringResource(R.string.login_pin_label),
+                    keyboardType = KeyboardType.NumberPassword, visualTransformation = PasswordVisualTransformation(), tag = "setup_login_pin")
+            } else when (s.step) {
                 SetupStep.SHOP -> {
                     RemuField(s.shopName, { v -> vm.update { it.copy(shopName = v) } }, stringResource(R.string.field_shop_name), tag = "setup_shop_name")
                     RemuField(s.city, { v -> vm.update { it.copy(city = v) } }, stringResource(R.string.field_city), tag = "setup_city")
@@ -145,7 +158,7 @@ fun SetupScreen(vm: SetupViewModel, invite: () -> InviteViewModel, c: AppContain
                 }
             }
         }
-        val (label, action, enabled) = when (s.step) {
+        val (label, action, enabled) = if (s.needsOwnerLogin) Triple(stringResource(R.string.login_unlock), vm::unlockWithOwnerPin, true) else when (s.step) {
             SetupStep.SHOP -> Triple(stringResource(R.string.setup_create_shop), vm::createShop, true)
             SetupStep.PAIR -> if (s.needsOwnerPin) Triple(stringResource(R.string.action_save), vm::createOwnerPin, true) else Triple(stringResource(R.string.pairing_pair), vm::pairHub, true)
             SetupStep.STREAM -> Triple(stringResource(R.string.action_next), vm::saveStream, s.chosenStream != null)

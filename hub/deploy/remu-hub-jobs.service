@@ -2,7 +2,7 @@
 [Unit]
 Description=Remu hub jobs
 After=remu-hub.service
-Requires=remu-hub.service
+BindsTo=remu-hub.service
 
 [Service]
 User=remu
@@ -14,9 +14,21 @@ Environment=REMU_STATE_DIR=/var/lib/remu/state
 ExecStart=/opt/remu/venv/bin/remu-hub jobs run
 Restart=always
 RestartSec=10
+CapabilityBoundingSet=
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallFilter=@system-service
+UMask=0077
 ReadWritePaths=/var/lib/remu
 StandardOutput=journal
 StandardError=journal

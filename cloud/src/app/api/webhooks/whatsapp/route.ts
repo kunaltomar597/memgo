@@ -1,8 +1,9 @@
 import { constantTimeEqual } from "@/lib/auth";
 import { getDeps } from "@/lib/deps";
 import { required } from "@/lib/env";
-import { ApiError, json, readBodyText, route } from "@/lib/http";
+import { ApiError, clientIp, json, readBodyText, route } from "@/lib/http";
 import { log } from "@/lib/log";
+import { webhookLimiter } from "@/lib/memoryRateLimit";
 import { processWebhook, verifySignature } from "@/lib/whatsappWebhook";
 
 export const runtime = "nodejs";
@@ -25,11 +26,20 @@ export const GET = route("webhooks.whatsapp.verify", async (req) => {
 
 /**
  * POST: X-Hub-Signature-256 (HMAC-SHA256 of the raw body with WHATSAPP_APP_SECRET) is checked before
- * the body is parsed; a bad signature gets 401 and the body is not logged.
+ * the body is parsed; a bad signature gets 401 and the body is not logged. A generous per-address
+ * limit (50 requests a second) answers 429 after the cheap content-length check and before the body
+ * is read, verified or parsed (TASK-112).
  */
 export const POST = route("webhooks.whatsapp", async (req) => {
   const deps = getDeps();
   const secret = required(deps.env.whatsappAppSecret, "WHATSAPP_APP_SECRET");
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_WEBHOOK_BODY) {
+    throw new ApiError(413, "payload_too_large", `body over ${MAX_WEBHOOK_BODY} bytes`);
+  }
+  if (!webhookLimiter.hit(clientIp(req), deps.now().getTime())) {
+    throw new ApiError(429, "rate_limited", "too many webhook requests");
+  }
   const raw = await readBodyText(req, MAX_WEBHOOK_BODY);
   if (!verifySignature(raw, req.headers.get("x-hub-signature-256"), secret)) {
     log.warn("webhook_bad_signature", { route: "webhooks.whatsapp" });

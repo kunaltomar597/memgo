@@ -49,6 +49,38 @@ def hub_serial() -> str:
     return platform.node() or "dev-hub"
 
 
+def cert_fingerprint(settings: Settings) -> str | None:
+    from remu_hub.api.tls import fingerprint
+
+    cert = settings.certs_dir / "hub.crt"
+    return fingerprint(cert) if cert.exists() else None
+
+
+def claim(
+    settings: Settings, client: CloudClient, pairing_code: str, hub: Hub | None = None
+) -> bool:
+    """One claim poll. On success the device token is saved and the claiming shop recorded.
+
+    The certificate fingerprint goes with it so Owner mode can compare the pin it took on the
+    LAN with what the hub told the cloud (review M3), and `cloud_shop_id` is shown on
+    GET /health so the owner can see which shop claimed the hub (review M7).
+    """
+    body = client.claim(pairing_code, hub_serial(), cert_fingerprint(settings))
+    if body.get("status") != "paired" or not body.get("device_token"):
+        return False
+    token = str(body["device_token"])
+    save_device_token(settings, token)
+    client.device_token = token
+    shop = str(body.get("shop_id") or "")
+    (settings.state_dir / "cloud_shop_id").write_text(shop)
+    if shop and shop != settings.shop_id:
+        log.error("claimed by cloud shop %s but REMU_SHOP_ID is %s", shop, settings.shop_id)
+    if hub is not None:
+        hub.cloud_shop_id = shop or None
+    log.info("paired with the cloud as device %s", body.get("device_id"))
+    return True
+
+
 class SyncWorker:
     def __init__(self, hub: Hub, client: CloudClient) -> None:
         self.hub = hub
@@ -63,14 +95,7 @@ class SyncWorker:
             self.wake.set()
 
     def claim_once(self, pairing_code: str) -> bool:
-        body = self.client.claim(pairing_code, hub_serial())
-        if body.get("status") == "paired" and body.get("device_token"):
-            token = str(body["device_token"])
-            save_device_token(self.hub.settings, token)
-            self.client.device_token = token
-            log.info("paired with the cloud as device %s", body.get("device_id"))
-            return True
-        return False
+        return claim(self.hub.settings, self.client, pairing_code, self.hub)
 
     def flush_once(self) -> int:
         sent = 0
@@ -78,7 +103,12 @@ class SyncWorker:
             batch = outbox.pending(self.hub.db, BATCH)
             if not batch:
                 return sent
-            results = self.client.post_events(batch)
+            try:
+                results = self.client.post_events(batch)
+            except CloudRejected as exc:
+                if exc.status != 400 or len(batch) == 1:
+                    raise
+                results = self._one_by_one(batch)  # find the bad event, keep the rest flowing
             by_id = {r.get("id"): r for r in results}
             acked = [e["id"] for e in batch if by_id.get(e["id"], {}).get("status") == "acked"]
             outbox.mark_synced(self.hub.db, acked)
@@ -92,13 +122,27 @@ class SyncWorker:
             if len(batch) < BATCH:
                 return sent
 
+    def _one_by_one(self, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for event in batch:
+            try:
+                out.extend(self.client.post_events([event]))
+            except CloudRejected as exc:
+                if exc.status != 400:
+                    raise
+                out.append({"id": event["id"], "status": "rejected", "reason": f"400: {exc}"})
+        return out
+
     def cycle(self) -> None:
         if not self.client.device_token:
             code_file = self.hub.settings.state_dir / "pairing.txt"
             if not code_file.exists() or not self.claim_once(code_file.read_text().strip()):
                 return
-        self.flush_once()
-        inbox.poll(self.hub, self.client)
+        # The inbox carries STOP withdrawals: poll it even when the flush fails (H1).
+        try:
+            self.flush_once()
+        finally:
+            inbox.poll(self.hub, self.client)
 
     def run(self) -> None:
         while not self._stop.is_set():

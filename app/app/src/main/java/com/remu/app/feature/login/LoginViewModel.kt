@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class LoginError { WRONG_PIN, HUB_UNREACHABLE, CERT_CHANGED, NEEDS_OWNER_PIN, NEEDS_OWNER_PHONE, OTHER }
+enum class LoginError { WRONG_PIN, HUB_UNREACHABLE, CERT_CHANGED, NEEDS_OWNER_PIN, NEEDS_OWNER_PHONE, SESSION_ENDED, HUB_LOCKED, OTHER }
 
 /** Where to go once the PIN is accepted. */
 enum class LoginDestination { CASHIER, OWNER_HOME, OWNER_SIGN_IN, SETUP }
@@ -35,7 +35,10 @@ data class LoginUiState(
  */
 class LoginViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(
-        LoginUiState(mode = if (c.session.current.lastMode == Mode.OWNER.name) Mode.OWNER else Mode.CASHIER),
+        LoginUiState(
+            mode = if (c.session.current.lastMode == Mode.OWNER.name) Mode.OWNER else Mode.CASHIER,
+            error = if (c.appState.sessionEnded.value) LoginError.SESSION_ENDED else null,
+        ),
     )
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
     private var wrongTries = 0
@@ -66,7 +69,8 @@ class LoginViewModel(private val c: AppContainer) : ViewModel() {
                         if (staff.role != "owner") return@launch fail(LoginError.NEEDS_OWNER_PIN)
                         if (c.session.current.hubRole != "owner") return@launch fail(LoginError.NEEDS_OWNER_PHONE)
                     }
-                    c.appState.login(StaffSession(staff.staffId, staff.name, staff.role, s.mode))
+                    // The staff session stays in memory only; it is never written to the DataStore.
+                    c.appState.login(StaffSession(staff.staffId, staff.name, staff.role, s.mode, staff.staffSession))
                     val sess = c.session.update {
                         if (s.mode == Mode.OWNER) it.copy(lastMode = s.mode.name, ownerStaffId = staff.staffId, ownerStaffName = staff.name)
                         else it.copy(lastMode = s.mode.name)
@@ -76,6 +80,7 @@ class LoginViewModel(private val c: AppContainer) : ViewModel() {
                 is ApiResult.HttpError -> when (r.status) {
                     401 -> { wrongTries++; fail(LoginError.WRONG_PIN); startWaitIfNeeded() }
                     429 -> { fail(LoginError.WRONG_PIN); startWait(60) }
+                    423 -> fail(LoginError.HUB_LOCKED)
                     else -> fail(LoginError.OTHER)
                 }
                 ApiResult.CertificateChanged -> fail(LoginError.CERT_CHANGED)

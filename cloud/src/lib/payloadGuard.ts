@@ -52,3 +52,18 @@ export function findForbidden(value: unknown, path = "$"): Violation | null {
   }
   return null;
 }
+
+/**
+ * POST /api/hub/events (docs/API_CONTRACT.md section 7 item 8): the batch is scanned without the
+ * events' payloads, so forbidden content outside a payload still refuses the request with 400,
+ * while a forbidden payload rejects only its own event (ingest.ts).
+ */
+export function findForbiddenOutsidePayloads(body: unknown): Violation | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return findForbidden(body);
+  const b = body as Record<string, unknown>;
+  if (!Array.isArray(b.events)) return findForbidden(body);
+  const events = b.events.map((e) =>
+    e && typeof e === "object" && !Array.isArray(e) && "payload" in e ? { ...(e as Record<string, unknown>), payload: null } : e,
+  );
+  return findForbidden({ ...b, events });
+}

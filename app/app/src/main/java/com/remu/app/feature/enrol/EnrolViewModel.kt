@@ -31,6 +31,10 @@ sealed interface EnrolOutcome {
     data object HubError : EnrolOutcome
     data object CertificateChanged : EnrolOutcome
     data object NotLoggedIn : EnrolOutcome
+    /** 422 `phone_required`: an adult other than the payer needs their own phone (contract 7.5). */
+    data object AdultPhoneNeeded : EnrolOutcome
+    /** 423 `locked`: the hub is revoked or locked (contract 7.7). */
+    data object HubLocked : EnrolOutcome
 }
 
 enum class SendKind { MAKE_MEMBER, SKIP_FACE }
@@ -49,7 +53,7 @@ data class EnrolUiState(
     val lastKind: SendKind? = null,
 ) {
     /** Make member waits for the hub: face crops are never queued on the phone. */
-    val hubReady: Boolean get() = hub.reachable == true && !hub.locked
+    val hubReady: Boolean get() = hub.reachable == true && !hub.locked && !hub.lockedOut
 }
 
 /** Set when the cashier came from "Add adult at counter" on a household. */
@@ -200,13 +204,25 @@ class EnrolViewModel(
                         _state.update { it.copy(openMemberId = body.memberId) }
                         finish(null)
                     }
+                    result.status == 422 && (body?.error ?: result.error) == "phone_required" -> {
+                        val form = _state.value.form
+                        val n = ids.size
+                        val face = body?.faceIndex
+                        val payer = form.payerIndex.coerceIn(0, (n - 1).coerceAtLeast(0))
+                        val key = if (face == null || face == payer || face !in 0 until n) "phone" else EnrolPayloadBuilder.adultPhoneKey(face)
+                        val err = if (key == "phone") FieldError.PHONE_EMPTY else FieldError.ADULT_PHONE_REQUIRED
+                        _state.update { it.copy(errors = FormErrors(it.errors.byField + (key to err))) }
+                        finish(EnrolOutcome.AdultPhoneNeeded)
+                    }
                     result.status == 422 && (body?.error ?: result.error) == "under_18" -> {
                         val refused = body?.refused?.mapNotNull { ids.getOrNull(it.faceIndex) }?.toSet()?.ifEmpty { null } ?: ids.toSet()
                         _state.update { it.copy(refusedTracking = refused, selection = FaceSelection()) }
                         finish(EnrolOutcome.AllUnder18)
                     }
                     result.status == 422 -> finish(EnrolOutcome.NoFace)
-                    result.status == 423 || result.error == "locked" -> { c.hubStatus.reportFailure(); finish(EnrolOutcome.HubError) }
+                    result.status == 423 || result.error == "locked" -> finish(EnrolOutcome.HubLocked)
+                    // The staff session ended; the app is already on its way back to the PIN screen.
+                    result.status == 401 && result.error == com.remu.app.network.hub.HubClient.ERROR_STAFF_SESSION_REQUIRED -> finish(null)
                     else -> finish(EnrolOutcome.HubError)
                 }
             }

@@ -57,6 +57,7 @@ fun OwnerSettingsScreen(
     onExport: () -> Unit,
     onInvite: () -> Unit,
     onSignedOut: () -> Unit,
+    onPairedPhones: () -> Unit = {},
 ) {
     val colors = Remu.colors
     val session by c.session.state.collectAsState()
@@ -75,6 +76,7 @@ fun OwnerSettingsScreen(
             SecondaryButton(stringResource(R.string.settings_staff), onStaff, modifier = Modifier.testTag("settings_staff"))
             SecondaryButton(stringResource(R.string.settings_device), onDevice, modifier = Modifier.testTag("settings_device"))
             SecondaryButton(stringResource(R.string.invite_counter), onInvite, modifier = Modifier.testTag("settings_invite"))
+            SecondaryButton(stringResource(R.string.paired_phones), onPairedPhones, modifier = Modifier.testTag("settings_paired_phones"))
             SecondaryButton(stringResource(R.string.export_consent), onExport, modifier = Modifier.testTag("settings_export"))
             SecondaryButton(stringResource(R.string.print_standee), { StandeePrinter.print(context, session.shopName) })
             LanguageSwitch(c.language, Modifier.testTag("settings_language"))

@@ -109,20 +109,23 @@ describe("payload_forbidden (privacy invariant 3)", () => {
     ["has_template as non-boolean", { has_template: "yes" }],
   ];
   for (const [name, extra] of cases) {
-    it(`refuses a payload with ${name} and writes nothing`, async () => {
+    it(`rejects the event with a payload with ${name} (payload_forbidden) and writes nothing`, async () => {
       const id = nextId("m");
-      const r = await postEvents(h, S.deviceToken, [ev("member_upsert", { ...memberUpsert(S.shopId, id), ...extra })]);
-      expect(r.status).toBe(400);
-      expect(r.json).toMatchObject({ error: "payload_forbidden" });
+      const bad = ev("member_upsert", { ...memberUpsert(S.shopId, id), ...extra });
+      const r = await postEvents(h, S.deviceToken, [bad]);
+      // docs/API_CONTRACT.md section 7 item 8: per event, not a 400 for the whole batch.
+      expect(r.status).toBe(200);
+      expect((r.json as unknown as Results).results).toEqual([{ id: bad.id, status: "rejected", reason: "payload_forbidden" }]);
       expect(await t.db.query("select 1 from members where id = $1", [id])).toHaveLength(0);
+      expect(await t.db.query("select 1 from hub_events where id = $1", [bad.id])).toHaveLength(0);
     });
   }
 
-  it("refuses any string over 1,024 characters that decodes as base64, and logs it", async () => {
+  it("rejects an event with any string over 1,024 characters that decodes as base64, and logs it", async () => {
     const blob = Buffer.alloc(2048, 0xff).toString("base64");
     const r = await postEvents(h, S.deviceToken, [ev("member_upsert", { ...memberUpsert(S.shopId, nextId("m")), notes: blob })]);
-    expect(r.status).toBe(400);
-    expect(r.json).toMatchObject({ error: "payload_forbidden" });
+    expect(r.status).toBe(200);
+    expect((r.json as unknown as Results).results[0]).toMatchObject({ status: "rejected", reason: "payload_forbidden" });
     expect(allLogs()).toContain('"event":"payload_forbidden"');
     expect(allLogs()).not.toContain(blob.slice(0, 100));
   });
@@ -199,6 +202,7 @@ describe("consent chain check on ingest (TASK-060)", () => {
 
 describe("nightly hash anchor (TASK-061 cloud half)", () => {
   it("stores the anchor, compares it with the mirrored head and flags a mismatch", async () => {
+    h.clock.set(new Date("2026-10-18T12:00:00.000Z")); // 17:30 IST on 2026-10-18
     const s = await setupShop(t, h, "anc");
     const chain = new ChainBuilder(s.shopId);
     const recs = [chain.next({ member_id: nextId("m") }), chain.next({ member_id: nextId("m") })];
@@ -209,15 +213,18 @@ describe("nightly hash anchor (TASK-061 cloud half)", () => {
     let d = (await t.db.query<{ anchor_mismatch: boolean }>("select anchor_mismatch from devices where id = $1", [s.deviceId]))[0]!;
     expect(d.anchor_mismatch).toBe(false);
 
+    h.clock.set(new Date("2026-10-18T22:00:00.000Z")); // 03:30 IST on 2026-10-19
     const bad = await call(anchorRoute, "POST", { path: "/api/hub/anchor", token: s.deviceToken, body: { date: "2026-10-19", chain_head_hash: `sha256:${"0".repeat(64)}` } });
     expect(bad.json).toEqual({ ok: true, match: false });
     d = (await t.db.query<{ anchor_mismatch: boolean }>("select anchor_mismatch from devices where id = $1", [s.deviceId]))[0]!;
     expect(d.anchor_mismatch).toBe(true);
     const anchors = await t.db.query("select to_char(date, 'YYYY-MM-DD') as date, match from hash_anchors where shop_id = $1 order by date", [s.shopId]);
     expect(anchors).toEqual([{ date: "2026-10-18", match: true }, { date: "2026-10-19", match: false }]);
-    // One row per shop per day: a repeat for the same day replaces it.
-    await call(anchorRoute, "POST", { path: "/api/hub/anchor", token: s.deviceToken, body: { date: "2026-10-19", chain_head_hash: chain.head } });
-    expect(await t.db.query("select 1 from hash_anchors where shop_id = $1", [s.shopId])).toHaveLength(2);
+    // One row per shop per day, insert-only (TASK-112): a repeat for the same day never replaces it.
+    const again = await call(anchorRoute, "POST", { path: "/api/hub/anchor", token: s.deviceToken, body: { date: "2026-10-19", chain_head_hash: chain.head } });
+    expect(again.json).toEqual({ ok: true, match: false });
+    expect(await t.db.query("select to_char(date, 'YYYY-MM-DD') as date, match from hash_anchors where shop_id = $1 order by date", [s.shopId])).toEqual(anchors);
+    h.clock.set(new Date("2026-10-18T12:00:00.000Z"));
     // An empty mirror anchors at genesis.
     const g = await setupShop(t, h, "ancg");
     const gen = await call(anchorRoute, "POST", { path: "/api/hub/anchor", token: g.deviceToken, body: { date: "2026-10-18", chain_head_hash: "sha256:genesis" } });

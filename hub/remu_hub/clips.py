@@ -49,6 +49,12 @@ class ClipStore:
         self.retention_days = retention_days
 
     def save(self, visit_id: str, mp4: bytes) -> str:
+        row = self.db.one(
+            "SELECT m.status FROM visits v JOIN members m ON m.id = v.member_id " "WHERE v.id = ?",
+            (visit_id,),
+        )
+        if row is not None and row["status"] in ("withdrawn", "expired"):
+            raise LookupError("member withdrew before the clip finished; clip not saved")
         clip_id = new_id("k")
         path = self.dir / f"{clip_id}.enc"
         path.write_bytes(self.sealer.seal(mp4, clip_id.encode()))

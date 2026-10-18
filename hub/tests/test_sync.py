@@ -14,7 +14,7 @@ from remu_hub.hub import EnrolIn, FaceIn, Hub
 from remu_hub.sync import inbox, outbox
 from remu_hub.sync.client import CloudClient, CloudError
 from remu_hub.sync.loop import SyncWorker
-from tests.helpers import face, make_hub
+from tests.helpers import deliver_and_activate, face, make_hub
 
 
 class MockCloud:
@@ -199,7 +199,7 @@ def test_activation_needs_a_delivered_notice(hub: Hub, cloud: MockCloud) -> None
 
 def test_stop_withdraws_at_once(hub: Hub, cloud: MockCloud) -> None:
     mid = enrol(hub)
-    hub.activate(mid)
+    deliver_and_activate(hub, mid)
     assert mid in hub.gallery
     cloud.push(
         "member_status", {"member_id": mid, "status": "withdrawn", "reason": "stop", "at": "t"}
@@ -250,3 +250,26 @@ def test_sync_code_opens_no_listener() -> None:
     root = Path(__file__).resolve().parents[1] / "remu_hub" / "sync"
     text = "".join(p.read_text() for p in root.rglob("*.py"))
     assert not re.search(r"\.bind\(|\.listen\(|uvicorn|serve_forever", text)
+
+
+def test_activation_without_a_delivered_record_waits(hub: Hub, cloud: MockCloud) -> None:
+    mid = enrol(hub)
+    cloud.push(
+        "member_status",
+        {"member_id": mid, "status": "active", "reason": "notice_delivered", "at": "t"},
+    )
+    inbox.poll(hub, client(cloud))
+    assert mid not in hub.gallery  # a compromised cloud alone cannot activate
+    cloud.push(
+        "notice_status",
+        {
+            "member_id": mid,
+            "consent_record_id": "c",
+            "wamid": "w",
+            "whatsapp_status": "delivered",
+            "status_ts": "t",
+            "delivered_at": "2026-10-18T17:42:40+05:30",
+        },
+    )
+    inbox.poll(hub, client(cloud))
+    assert mid in hub.gallery  # the delivery record arrived, the waiting activation applies

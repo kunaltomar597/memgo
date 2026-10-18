@@ -37,7 +37,8 @@ class InviteViewModel(private val c: AppContainer) : ViewModel() {
             when (val r = c.hub.createInvite()) {
                 is ApiResult.Ok -> {
                     val host = PairingViewModel.hostOf(c.session.current.hubBaseUrl)
-                    val link = PairLink(host, r.value.inviteCode).toUri()
+                    // fp: the counter phone accepts only the certificate this owner phone pinned (contract 7.4).
+                    val link = PairLink(host, r.value.inviteCode, c.session.current.certSha256).toUri()
                     _state.update { it.copy(loading = false, code = r.value.inviteCode, link = link) }
                 }
                 else -> _state.update { it.copy(loading = false, failed = true) }

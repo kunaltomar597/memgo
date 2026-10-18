@@ -37,6 +37,8 @@ sealed interface ClipState {
     /** Clip bytes held in memory for the player; never written to storage or shared. */
     class Ready(val visitId: String, val bytes: ByteArray) : ClipState
     data class Failed(val visitId: String) : ClipState
+    /** The hub answered 403: clips are for the owner's phone in Owner mode only (contract 7.2). */
+    data class Forbidden(val visitId: String) : ClipState
 }
 
 data class MemberDetailUiState(
@@ -178,8 +180,12 @@ class MemberDetailViewModel(private val c: AppContainer, val memberId: String, v
 
     // ---- Clips -----------------------------------------------------------------------------
 
-    /** A clip plays only on the shop WiFi; off it no clip request is made at all (TASK-081). */
-    fun canPlay(visit: Visit): Boolean = ownerMode && visit.hasClip && _state.value.hub.onLan && withinRetention(visit)
+    /**
+     * A clip plays only on the shop WiFi (TASK-081) and only in Owner mode on the owner-paired
+     * phone (docs/API_CONTRACT.md 7.2); otherwise no clip request is made at all.
+     */
+    fun canPlay(visit: Visit): Boolean =
+        ownerMode && c.ownerDataAllowed() && visit.hasClip && _state.value.hub.onLan && withinRetention(visit)
 
     fun playClip(visit: Visit) {
         if (!canPlay(visit)) return
@@ -187,6 +193,7 @@ class MemberDetailViewModel(private val c: AppContainer, val memberId: String, v
         viewModelScope.launch {
             when (val r = c.hub.clip(visit.clipId ?: visit.id)) {
                 is ApiResult.Ok -> _state.update { it.copy(clip = ClipState.Ready(visit.id, r.value)) }
+                is ApiResult.HttpError -> _state.update { it.copy(clip = if (r.status == 403) ClipState.Forbidden(visit.id) else ClipState.Failed(visit.id)) }
                 else -> _state.update { it.copy(clip = ClipState.Failed(visit.id)) }
             }
         }

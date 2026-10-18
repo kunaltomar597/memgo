@@ -34,6 +34,14 @@ PACK_FILES = {
     "buffalo_sc": {"det": "det_500m.onnx", "rec": "w600k_mbf.onnx"},
 }
 AGE_FILE = "genderage.onnx"  # always from buffalo_l
+# Checked at every load, not only at download (docs/SECURITY.md section 3.1, review low).
+FILE_SHA256 = {
+    "det_10g.onnx": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+    "w600k_r50.onnx": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+    "genderage.onnx": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb",
+    "det_500m.onnx": "5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a",
+    "w600k_mbf.onnx": "9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f",
+}
 CACHE = Path.home() / ".cache" / "remu" / "models"
 
 
@@ -123,7 +131,11 @@ def load(models_dir: Path, pack: str) -> ModelPack:
             raise ModelError(
                 "model files missing, run `remu-hub models download`: " + ", ".join(absent)
             )
-        version = f"{pack}:{_sha256(paths['rec'])[:8]}"
+        for p in paths.values():
+            digest = _sha256(p)
+            if digest != FILE_SHA256[p.name]:
+                raise ModelError(f"{p.name} does not match its pinned hash; download it again")
+        version = f"{pack}:{FILE_SHA256[paths['rec'].name][:8]}"
         mp = ModelPack(
             pack, _session(paths["det"]), _session(paths["rec"]), _session(paths["age"]), version
         )

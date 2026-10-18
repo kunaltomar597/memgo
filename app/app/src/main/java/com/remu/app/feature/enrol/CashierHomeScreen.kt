@@ -54,6 +54,7 @@ import com.remu.app.core.ui.RemuField
 import com.remu.app.core.ui.RemuText
 import com.remu.app.core.ui.RemuTopBar
 import com.remu.app.core.ui.SecondaryButton
+import com.remu.app.core.ui.SecureScreen
 import com.remu.app.core.ui.StatusChip
 
 @Composable
@@ -67,6 +68,8 @@ fun CashierHomeScreen(
 ) {
     val s by vm.state.collectAsState()
     KeepScreenOn()
+    // Customer faces are on this screen: no screenshots, no recent-apps snapshot (FLAG_SECURE).
+    SecureScreen()
     LaunchedEffect(s.openMemberId) { s.openMemberId?.let { onOpenMember(it); vm.consumeOpenMember() } }
     LaunchedEffect(s.outcome) { if (s.outcome == EnrolOutcome.AddedToHousehold) onHouseholdDone() }
     val familyTemplate = stringResource(R.string.household_label_default)
@@ -202,6 +205,8 @@ private fun OutcomeCard(s: EnrolUiState, onRetry: () -> Unit, onPairAgain: () ->
         EnrolOutcome.SelectFace -> InlineError(stringResource(R.string.enrol_select_face), null)
         EnrolOutcome.HubError -> InlineError(stringResource(R.string.error_hub_no_reply), onRetry)
         EnrolOutcome.NotLoggedIn -> InlineError(stringResource(R.string.error_generic), null)
+        EnrolOutcome.AdultPhoneNeeded -> Box(Modifier.testTag("outcome_phone_required")) { InlineError(stringResource(R.string.error_adult_phone_required), null) }
+        EnrolOutcome.HubLocked -> Box(Modifier.testTag("outcome_hub_locked")) { InlineError(stringResource(R.string.banner_hub_locked_support), null) }
         EnrolOutcome.CertificateChanged -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             InlineError(stringResource(R.string.error_cert_changed), null)
             SecondaryButton(stringResource(R.string.pairing_title), onPairAgain)
@@ -214,6 +219,8 @@ private fun errorText(e: FieldError?): String? = when (e) {
     null -> null
     FieldError.PHONE_EMPTY -> stringResource(R.string.error_phone_empty)
     FieldError.PHONE_INVALID, FieldError.ADULT_PHONE_INVALID -> stringResource(R.string.error_phone_invalid)
+    FieldError.ADULT_PHONE_REQUIRED -> stringResource(R.string.error_adult_phone_required)
+    FieldError.ADULT_PHONE_SAME -> stringResource(R.string.error_adult_phone_same)
     FieldError.AMOUNT_EMPTY -> stringResource(R.string.error_amount_empty)
     FieldError.AMOUNT_INVALID -> stringResource(R.string.error_amount_invalid)
     FieldError.BILL_NO -> stringResource(R.string.error_bill_no)
@@ -252,11 +259,15 @@ private fun BillingFields(s: EnrolUiState, onForm: (BillingForm) -> Unit) {
                 ) { RemuText(stringResource(R.string.household_chip, i + 1), style = RemuType.chip, color = if (chosen) c.onAccent else c.text) }
             }
         }
-        for (i in 1 until n) {
-            val names = f.adultNames.padded(n - 1)
-            val phones = f.adultPhones.padded(n - 1)
-            RemuField(names[i - 1], { v -> onForm(f.copy(adultNames = names.toMutableList().also { it[i - 1] = v })) }, stringResource(R.string.field_adult_name, i + 1), tag = "field_adult_name_$i")
-            RemuField(phones[i - 1], { v -> onForm(f.copy(adultPhones = phones.toMutableList().also { it[i - 1] = v })) }, stringResource(R.string.field_adult_phone, i + 1), error = errorText(e["adultPhone$i"]), keyboardType = KeyboardType.Phone, tag = "field_adult_phone_$i")
+        val payer = f.payerIndex.coerceIn(0, n - 1)
+        RemuText(stringResource(R.string.household_payer_hint, payer + 1), style = RemuType.caption, color = c.muted, modifier = Modifier.testTag("household_payer_hint"))
+        // Every adult other than the payer gives their own phone; the payer's is the phone above.
+        for (i in 0 until n) {
+            if (i == payer) continue
+            val names = f.adultNames.padded(n)
+            val phones = f.adultPhones.padded(n)
+            RemuField(names[i], { v -> onForm(f.copy(adultNames = names.toMutableList().also { it[i] = v })) }, stringResource(R.string.field_adult_name, i + 1), tag = "field_adult_name_$i")
+            RemuField(phones[i], { v -> onForm(f.copy(adultPhones = phones.toMutableList().also { it[i] = v })) }, stringResource(R.string.field_adult_phone, i + 1), error = errorText(e[EnrolPayloadBuilder.adultPhoneKey(i)]), keyboardType = KeyboardType.Phone, tag = "field_adult_phone_$i")
         }
     }
 }

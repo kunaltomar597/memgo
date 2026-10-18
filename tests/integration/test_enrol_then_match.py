@@ -72,6 +72,8 @@ def test_enrol_then_match(tmp_path: Path) -> None:
     token = client.post("/pair", json={"code": code}).json()["app_token"]
     h = {"Authorization": f"Bearer {token}"}
     staff = auth.add_staff(hub.db, "shop-int", "Ravi", "cashier", "4821")
+    sess = client.post("/staff/verify-pin", json={"pin": "4821"}, headers=h).json()
+    h = h | {"X-Remu-Staff-Session": sess["staff_session"]}
     crop, lm = crop_at(6.0)
     r = client.post(
         "/enrol",

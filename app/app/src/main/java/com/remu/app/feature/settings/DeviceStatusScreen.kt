@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import com.remu.app.R
 import com.remu.app.core.format.friendlyDateText
 import com.remu.app.core.theme.Remu
+import com.remu.app.core.ui.HubIdentityBanner
+import com.remu.app.core.ui.HubLockedBanner
 import com.remu.app.core.ui.PrimaryButton
 import com.remu.app.core.ui.RemuCard
 import com.remu.app.core.ui.RemuText
@@ -31,6 +33,8 @@ fun DeviceStatusScreen(vm: DeviceStatusViewModel, onBack: () -> Unit, onPairHub:
     val c = Remu.colors
     Column(Modifier.fillMaxSize().background(c.background)) {
         RemuTopBar(stringResource(R.string.settings_device), navigationIcon = { BackIcon(onBack) })
+        HubIdentityBanner(s.identity)
+        if (s.hub.lockedOut) HubLockedBanner()
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             RemuCard(Modifier.testTag("device_lan")) {
                 val online = s.hub.reachable == true
@@ -49,6 +53,11 @@ fun DeviceStatusScreen(vm: DeviceStatusViewModel, onBack: () -> Unit, onPairHub:
                         RemuText(stringResource(R.string.device_stream, label))
                     }
                     if (h.locked) RemuText(stringResource(R.string.device_locked), color = c.danger)
+                    when {
+                        s.otherShop -> RemuText(stringResource(R.string.hub_other_shop), color = c.danger, modifier = Modifier.testTag("device_other_shop"))
+                        h.cloudShopId != null -> RemuText(stringResource(R.string.device_claimed_this_shop), modifier = Modifier.testTag("device_claimed"))
+                        else -> RemuText(stringResource(R.string.device_not_claimed), color = c.muted, modifier = Modifier.testTag("device_not_claimed"))
+                    }
                 }
                 if (s.hub.certificateChanged) RemuText(stringResource(R.string.error_cert_changed), color = c.danger)
             }

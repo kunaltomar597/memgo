@@ -60,6 +60,7 @@ fun loadErrorText(e: LoadError): String = when (e) {
     LoadError.HUB_UNREACHABLE -> stringResource(R.string.error_hub_no_reply)
     LoadError.CERT_CHANGED -> stringResource(R.string.error_cert_changed)
     LoadError.CLOUD_UNREACHABLE -> stringResource(R.string.error_cloud_no_reply)
+    LoadError.HUB_LOCKED -> stringResource(R.string.banner_hub_locked_support)
     LoadError.OTHER -> stringResource(R.string.error_generic)
 }
 

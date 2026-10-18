@@ -45,6 +45,7 @@ class SetupWizardTest {
         w.hub.on("POST /pair", 200, """{"app_token":"owner-token","cert_sha256":"AB:CD","shop_id":"sharma-jewellers-jaipur","role":"owner"}""")
         w.hub.on("GET /staff", body = "[]")
         w.hub.on("POST /staff", 201, """{"staff_id":"s_owner"}""")
+        w.hub.on("POST /staff/verify-pin", 200, """{"staff_id":"s_owner","name":"Rajesh","role":"owner","staff_session":"sess-owner-1"}""")
         w.hub.on("GET /discover", body = """{"streams":[{"id":"ch1","label":"Channel 1 (gate)","url":"rtsp://dvr/ch1"},{"id":"ch2","label":"Channel 2","url":"rtsp://dvr/ch2"}]}""")
         w.hub.on("PUT /settings/streams", 200, "{}")
         w.hub.onRaw("GET /preview") { MockResponse().setHeader("Content-Type", "multipart/x-mixed-replace; boundary=frame").setBody("--frame\r\nContent-Type: image/jpeg\r\n\r\n") }
@@ -80,6 +81,11 @@ class SetupWizardTest {
         rule.onNodeWithTag("setup_primary").performClick()
         rule.waitForTag("setup_title_STREAM")
         assertEquals("""{"name":"Rajesh","role":"owner","pin":"482199"}""", w.hub.requestsTo("POST", "/staff").single().body)
+        // The first owner is created before any staff session; the same PIN then opens one (contract 7.1).
+        assertEquals(null, w.hub.requestsTo("POST", "/staff").single().headers["X-Remu-Staff-Session"])
+        assertEquals("""{"pin":"482199"}""", w.hub.requestsTo("POST", "/staff/verify-pin").single().body)
+        assertEquals("sess-owner-1", w.c.appState.staff.value?.sessionToken)
+        assertTrue("the staff session is never persisted", !w.c.session.current.toString().contains("sess-owner-1"))
 
         // 3. Gate stream
         rule.waitForTag("stream_0")
@@ -87,6 +93,7 @@ class SetupWizardTest {
         rule.onNodeWithTag("setup_primary").performClick()
         rule.waitForTag("setup_title_AIM")
         assertEquals("""{"gate_url":"rtsp://dvr/ch1"}""", w.hub.requestsTo("PUT", "/settings/streams").single().body)
+        assertEquals("sess-owner-1", w.hub.requestsTo("PUT", "/settings/streams").single().headers["X-Remu-Staff-Session"])
 
         // 4. Aim
         rule.onNodeWithTag("aim_preview").assertIsDisplayed()
@@ -96,6 +103,7 @@ class SetupWizardTest {
         // 5. Counter phone invite as QR
         rule.waitForTag("invite_qr")
         rule.onNodeWithText("Invite code: 483920").assertIsDisplayed()
+        assertEquals("sess-owner-1", w.hub.requestsTo("POST", "/pair/invite").single().headers["X-Remu-Staff-Session"])
         rule.onNodeWithTag("setup_primary").performClick()
         rule.waitForTag("setup_title_STANDEE")
 

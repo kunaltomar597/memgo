@@ -89,3 +89,20 @@ def make_hub(tmp_path: Path, **env: str) -> Hub:
 def face(value: int = 120, **extra: Any) -> dict[str, Any]:
     lm = [[56, 64], [104, 64], [80, 88], [61, 112], [99, 112]]
     return {"crop_jpeg_b64": jpeg_b64(value), "landmarks": lm, **extra}
+
+
+def deliver_and_activate(hub: Hub, member_id: str) -> None:
+    """Test helper: record a delivered notice in the chain, then activate, as the inbox does."""
+    from remu_hub.db.consent import append_followup
+
+    append_followup(
+        hub.db,
+        member_id,
+        channel="whatsapp_webhook",
+        notice_delivery={
+            "whatsapp_msg_id": "wamid.TEST",
+            "whatsapp_status": "delivered",
+            "delivered_at": "2026-10-18T12:00:00+05:30",
+        },
+    )
+    assert hub.activate(member_id)

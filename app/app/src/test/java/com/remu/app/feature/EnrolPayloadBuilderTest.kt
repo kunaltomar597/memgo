@@ -44,17 +44,39 @@ class EnrolPayloadBuilderTest {
     }
 
     @Test fun householdFieldsOnlyWithTwoOrMoreFaces() {
-        val f = form.copy(householdLabel = "Sharma family", payerIndex = 1, adultNames = listOf("Sunita Sharma"), adultPhones = listOf("9123456780"))
+        // Adult 2 pays: the main name and phone are theirs; adult 1 (face 0) gives their own.
+        val f = form.copy(householdLabel = "Sharma family", payerIndex = 1, adultNames = listOf("Sunita Sharma", ""), adultPhones = listOf("9123456780", ""))
         val one = json(EnrolPayloadBuilder.build(f, listOf(crop()), "s_1"))
         assertFalse("household_label" in one.keys)
         assertFalse("payer_index" in one.keys)
+        assertFalse("phone" in one["faces"]!!.jsonArray[0].jsonObject.keys)
         val two = json(EnrolPayloadBuilder.build(f, listOf(crop(), crop()), "s_1"))
         assertEquals("Sharma family", two["household_label"]!!.jsonPrimitive.content)
         assertEquals(1, two["payer_index"]!!.jsonPrimitive.content.toInt())
-        val second = two["faces"]!!.jsonArray[1].jsonObject
-        assertEquals("Sunita Sharma", second["display_name"]!!.jsonPrimitive.content)
-        assertEquals("+919123456780", second["phone"]!!.jsonPrimitive.content)
-        assertNull(two["faces"]!!.jsonArray[0].jsonObject["display_name"])
+        val first = two["faces"]!!.jsonArray[0].jsonObject
+        assertEquals("Sunita Sharma", first["display_name"]!!.jsonPrimitive.content)
+        assertEquals("+919123456780", first["phone"]!!.jsonPrimitive.content)
+        val payer = two["faces"]!!.jsonArray[1].jsonObject
+        assertNull(payer["display_name"])
+        assertEquals("+919876543210", payer["phone"]!!.jsonPrimitive.content)
+    }
+
+    /** docs/API_CONTRACT.md 7.5: each adult other than the payer needs their own, different phone. */
+    @Test fun householdNonPayerPhones() {
+        val three = form.copy(householdLabel = "Sharma family", payerIndex = 1)
+        val missing = EnrolPayloadBuilder.validate(three, 3)
+        assertEquals(FieldError.ADULT_PHONE_REQUIRED, missing["adultPhone0"])
+        assertNull("the payer uses the main phone", missing["adultPhone1"])
+        assertEquals(FieldError.ADULT_PHONE_REQUIRED, missing["adultPhone2"])
+        val same = EnrolPayloadBuilder.validate(three.copy(adultPhones = listOf("+91 98765 43210", "", "9123456780")), 3)
+        assertEquals(FieldError.ADULT_PHONE_SAME, same["adultPhone0"])
+        assertNull(same["adultPhone2"])
+        val twice = EnrolPayloadBuilder.validate(three.copy(adultPhones = listOf("9123456780", "", "09123456780")), 3)
+        assertEquals(FieldError.ADULT_PHONE_SAME, twice["adultPhone2"])
+        val ok = three.copy(adultPhones = listOf("9123456780", "", "9000000001"))
+        assertTrue(EnrolPayloadBuilder.validate(ok, 3).ok)
+        val faces = json(EnrolPayloadBuilder.build(ok, listOf(crop(), crop(), crop()), "s_1"))["faces"]!!.jsonArray
+        assertEquals(listOf("+919123456780", "+919876543210", "+919000000001"), faces.map { it.jsonObject["phone"]!!.jsonPrimitive.content })
     }
 
     @Test fun phoneMemberHasNoFaces() {
@@ -73,7 +95,7 @@ class EnrolPayloadBuilderTest {
         assertNull(EnrolPayloadBuilder.validate(form.copy(name = ""), 0)["name"])
         // Household needs a label.
         assertEquals(FieldError.HOUSEHOLD_LABEL, EnrolPayloadBuilder.validate(form, 2)["householdLabel"])
-        assertEquals(FieldError.ADULT_PHONE_INVALID, EnrolPayloadBuilder.validate(form.copy(householdLabel = "S", adultPhones = listOf("12")), 2)["adultPhone1"])
+        assertEquals(FieldError.ADULT_PHONE_INVALID, EnrolPayloadBuilder.validate(form.copy(householdLabel = "S", adultPhones = listOf("", "12")), 2)["adultPhone1"])
     }
 
     @Test fun cropLimitIs300Kb() {

@@ -25,6 +25,8 @@ data class CloudDevice(
     val online: Boolean = false,
     val locked: Boolean = false,
     @SerialName("chain_break") val chainBreak: Boolean = false,
+    /** The hub's certificate fingerprint as sent in its claim (contract 7.4); null if unknown. */
+    @SerialName("cert_sha256") val certSha256: String? = null,
 )
 
 @Serializable

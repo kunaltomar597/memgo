@@ -72,6 +72,7 @@ fun TimelineSection(
                                 }
                                 clip is ClipState.Loading && clip.visitId == v.id -> RemuText(stringResource(R.string.clip_loading), color = c.muted)
                                 clip is ClipState.Failed && clip.visitId == v.id -> InlineError(stringResource(R.string.clip_failed), { onPlay(v) })
+                                clip is ClipState.Forbidden && clip.visitId == v.id -> RemuText(stringResource(R.string.clip_owner_only), style = RemuType.caption, color = c.muted, modifier = Modifier.testTag("clip_forbidden_${v.id}"))
                                 canPlay(v) -> SecondaryButton(stringResource(R.string.play_clip), { onPlay(v) }, modifier = Modifier.testTag("play_clip_${v.id}"))
                             }
                         }

@@ -102,18 +102,24 @@ class CounterClips:
 
 
 def serve(settings: Settings, *, with_pipeline: bool = True, with_sync: bool = True) -> int:
+    import os
+
     from remu_hub.observability import init_sentry
     from remu_hub.recovery import recover_if_corrupt
 
     init_sentry(settings.sentry_dsn, settings.shop_id)
+    if settings.require_encrypted and not os.path.ismount(settings.data_dir):
+        log.error("%s is not a mounted encrypted volume; refusing to start", settings.data_dir)
+        return 1  # systemd restarts the unit, and ExecStartPre unlocks again
     recover_if_corrupt(settings.db_path)
     hub = Hub(settings)
     cert, key = ensure_cert(settings.certs_dir)
     app = create_app(hub, cert)
     start_gallery_refresh(hub)
+    pipeline_thread: threading.Thread | None = None
     if with_pipeline:
         hub.engine  # load models before serving  # noqa: B018
-        start_pipeline(hub, settings)
+        _, pipeline_thread = start_pipeline(hub, settings)
         if settings.rtsp_counter_url:
             counter = CounterClips(hub, settings.rtsp_counter_url)
             counter.start()
@@ -128,6 +134,13 @@ def serve(settings: Settings, *, with_pipeline: bool = True, with_sync: bool = T
         from remu_hub.sync.loop import start_sync
 
         start_sync(hub, settings)
+    from remu_hub.systemd import start_watchdog
+
+    def alive() -> bool:
+        return pipeline_thread is None or pipeline_thread.is_alive()
+
+    # READY=1 once the server is listening; the watchdog stops pinging if the gate loop dies.
+    app.router.on_startup.append(lambda: start_watchdog(alive))
     uvicorn.run(
         app,
         host=settings.api_host,
@@ -135,5 +148,6 @@ def serve(settings: Settings, *, with_pipeline: bool = True, with_sync: bool = T
         ssl_certfile=str(cert),
         ssl_keyfile=str(key),
         log_level=settings.log_level.lower(),
+        access_log=False,  # query strings carry phone numbers and names
     )
     return 0

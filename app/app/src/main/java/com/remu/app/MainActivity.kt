@@ -3,9 +3,11 @@ package com.remu.app
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.remu.app.core.nav.PendingAlert
 import com.remu.app.core.nav.RemuNavHost
+import com.remu.app.feature.export.AndroidExportShare
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : AppCompatActivity() {
@@ -13,8 +15,14 @@ class MainActivity : AppCompatActivity() {
 
     private val container: AppContainer get() = (application as RemuApp).container
 
+    /** The consent export share sheet; its files are deleted as soon as it returns. */
+    private val shareSheet = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        (container.exportShare as? AndroidExportShare)?.onShareReturned()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        (container.exportShare as? AndroidExportShare)?.launcher = { shareSheet.launch(it) }
         readIntent(intent)
         setContent { RemuNavHost(container, pendingAlert) }
     }
@@ -32,6 +40,11 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         container.appState.lockIfIdle()
+    }
+
+    override fun onDestroy() {
+        (container.exportShare as? AndroidExportShare)?.launcher = null
+        super.onDestroy()
     }
 
     override fun onStop() {

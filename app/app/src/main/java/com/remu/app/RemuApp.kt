@@ -10,6 +10,7 @@ import com.remu.app.feature.alerts.AndroidAlertNotifier
 import com.remu.app.feature.enrol.CameraXCounterCamera
 import com.remu.app.feature.enrol.CounterCameraFactory
 import com.remu.app.feature.export.AndroidExportShare
+import com.remu.app.feature.export.ExportFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,6 +23,8 @@ class RemuApp : Application() {
     override fun onCreate() {
         super.onCreate()
         SentrySetup.init(this)
+        // Consent export files left by a share sheet the app never saw return (process killed).
+        Thread { ExportFiles.deleteOlderThan(ExportFiles.dir(this)) }.start()
     }
 
     private fun build(): AppContainer {

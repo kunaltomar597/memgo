@@ -48,7 +48,7 @@ class CashierEndToEndTest {
         runBlocking { c.session.update { it.copy(hubBaseUrl = null, hubToken = null, certSha256 = null) } }
         assertNull(runBlocking { HubPairing.pair(c, host!!, code!!) })
         val staff = (runBlocking { c.hub.verifyPin(pin!!) } as ApiResult.Ok).value
-        c.appState.login(StaffSession(staff.staffId, staff.name, staff.role, Mode.CASHIER))
+        c.appState.login(StaffSession(staff.staffId, staff.name, staff.role, Mode.CASHIER, staff.staffSession))
         val phone = "98" + (10_000_000 + (System.currentTimeMillis() % 89_999_999)).toString().take(8)
         val vm = EnrolViewModel(SavedStateHandle(), c, c.cameraFactory.create(ctx, false))
         rule.setContent { RemuTheme(forceLight = true) { CashierHomeScreen(vm, {}, {}, {}, {}) } }

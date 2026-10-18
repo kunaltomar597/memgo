@@ -6,6 +6,7 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 
 
 def notify(message: str) -> bool:
@@ -20,7 +21,7 @@ def notify(message: str) -> bool:
     return True
 
 
-def start_watchdog(alive: callable[[], bool] | None = None) -> None:  # type: ignore[valid-type]
+def start_watchdog(alive: Callable[[], bool] | None = None) -> None:
     usec = os.environ.get("WATCHDOG_USEC")
     notify("READY=1")
     if not usec:

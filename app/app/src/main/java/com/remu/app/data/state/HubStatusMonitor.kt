@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -16,9 +17,17 @@ data class HubStatus(
     val reachable: Boolean? = null,
     val health: HubHealth? = null,
     val certificateChanged: Boolean = false,
+    /**
+     * A hub route answered 423 `locked`: the hub is revoked or its data directory is locked, so
+     * every route but `GET /health` refuses (docs/API_CONTRACT.md 7.7). Hub actions are disabled.
+     */
+    val lockedOut: Boolean = false,
 ) {
-    /** The hub answered `GET /health` recently: the phone is on the shop WiFi. */
-    val onLan: Boolean get() = reachable == true
+    /**
+     * The hub answered `GET /health` recently and takes requests: the phone is on the shop WiFi.
+     * False while [lockedOut], so every LAN-only action is disabled and Owner mode uses the cloud.
+     */
+    val onLan: Boolean get() = reachable == true && !lockedOut
     val internetDown: Boolean get() = reachable == true && health?.internet == false
     val locked: Boolean get() = reachable == true && health?.locked == true
 }
@@ -49,17 +58,30 @@ class HubStatusMonitor(
 
     fun stop() { job?.cancel(); job = null }
 
-    /** One check now; returns true when the hub answered. */
+    /**
+     * One check now; returns true when the hub answered. While [HubStatus.lockedOut], `GET /health`
+     * still answers, so one authenticated read probes whether the lock has lifted.
+     */
     suspend fun check(): Boolean {
         if (!hub.isConfigured()) {
             _status.value = HubStatus(reachable = false)
             return false
         }
+        val wasLocked = _status.value.lockedOut
         return when (val r = hub.health()) {
-            is ApiResult.Ok -> { _status.value = HubStatus(true, r.value); true }
+            is ApiResult.Ok -> {
+                _status.update { HubStatus(true, r.value, lockedOut = it.lockedOut) }
+                if (wasLocked) hub.listStaff() // the reply flips lockedOut through setLockedOut
+                true
+            }
             ApiResult.CertificateChanged -> { _status.value = HubStatus(false, null, certificateChanged = true); false }
-            else -> { _status.value = HubStatus(false, _status.value.health); false }
+            else -> { _status.update { HubStatus(false, it.health, lockedOut = it.lockedOut) }; false }
         }
+    }
+
+    /** A hub route answered 423 `locked` (true) or answered anything else (false). */
+    fun setLockedOut(locked: Boolean) {
+        if (_status.value.lockedOut != locked) _status.update { it.copy(lockedOut = locked) }
     }
 
     /** A failed request elsewhere is a hint the hub went away; re-check soon. */

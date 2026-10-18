@@ -137,8 +137,13 @@ def append_followup(
     notice_delivery: dict[str, Any] | None = None,
     withdrawn_at: str | None = None,
     template_deleted_at: str | None = None,
+    actor: str | None = None,
 ) -> dict[str, Any]:
-    """Append a record for an existing member, carrying the last record's fields forward."""
+    """Append a record for an existing member, carrying the last record's fields forward.
+
+    `cashier_id` of the new record is the `actor`: the staff id who removed the member, or
+    None for webhook, expiry and sweep records. It is never the enrolling cashier's id.
+    """
     with db.tx():
         last = latest_for_member(db, member_id)
         if last is None:
@@ -152,7 +157,7 @@ def append_followup(
             script_version=last["script_version"],
             notice_version=last["notice_version"],
             bill_no=last["bill_no"],
-            cashier_id=last["cashier_id"],
+            cashier_id=actor,
             purposes=last["purposes_json"],
             notice_delivery=delivery,
             adult_check=last["adult_check"],

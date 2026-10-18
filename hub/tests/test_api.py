@@ -29,12 +29,32 @@ def client(hub: Hub) -> TestClient:
     return TestClient(create_app(hub, cert))
 
 
+OWNER_PIN = "9999"
+
+
+def with_session(client: TestClient, h: dict[str, str], pin: str) -> dict[str, str]:
+    """App headers plus the staff session from a verified PIN, as the app sends them."""
+    r = client.post("/staff/verify-pin", json={"pin": pin}, headers=h)
+    assert r.status_code == 200, r.text
+    base = {"Authorization": h["Authorization"]}
+    return base | {"X-Remu-Staff-Session": r.json()["staff_session"]}
+
+
 @pytest.fixture
 def owner(hub: Hub, client: TestClient) -> dict[str, str]:
     code = auth.create_hub_code(hub.db)
     r = client.post("/pair", json={"code": code})
     assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['app_token']}"}
+    h = {"Authorization": f"Bearer {r.json()['app_token']}"}
+    created = client.post(
+        "/staff", json={"name": "Owner", "role": "owner", "pin": OWNER_PIN}, headers=h
+    )  # first owner: allowed without a session
+    assert created.status_code == 201, created.text
+    return with_session(client, h, OWNER_PIN)
+
+
+def owner_staff_id(hub: Hub) -> str:
+    return str(hub.db.one("SELECT id FROM staff WHERE name = 'Owner'")["id"])
 
 
 @pytest.fixture
@@ -43,6 +63,7 @@ def cashier_id(hub: Hub) -> str:
 
 
 def enrol(client: TestClient, h: dict[str, str], staff: str, **body: Any) -> Any:
+    h = with_session(client, h, "4821")  # the cashier fixture's PIN: the write is theirs
     payload = {
         "staff_id": staff,
         "phone": "9876543210",
@@ -105,7 +126,7 @@ def test_staff_and_pin(client: TestClient, owner: dict[str, str]) -> None:
     ok = client.post("/staff/verify-pin", json={"pin": "5566"}, headers=owner).json()
     assert ok["name"] == "Sunita" and ok["role"] == "cashier"
     assert client.post("/staff/verify-pin", json={"pin": "0000"}, headers=owner).status_code == 401
-    assert [s["name"] for s in client.get("/staff", headers=owner).json()] == ["Sunita"]
+    assert [s["name"] for s in client.get("/staff", headers=owner).json()] == ["Owner", "Sunita"]
 
 
 def test_enrol_one_adult(
@@ -157,7 +178,7 @@ def test_invalid_crop_and_missing_phone(
 ) -> None:
     bad = enrol(client, owner, cashier_id, faces=[{"crop_jpeg_b64": "bm90IGEganBlZw=="}])
     assert bad.status_code == 400 and "JPEG" in bad.json()["detail"]
-    payload = {"staff_id": cashier_id, "faces": [face()]}
+    payload = {"faces": [face()]}
     r = client.post("/enrol", json=payload, headers=owner)
     assert r.status_code == 400 and r.json()["error"] == "invalid"
     assert enrol(client, owner, cashier_id, phone="123").status_code == 400
@@ -184,7 +205,10 @@ def test_zero_faces_records_a_phone_member(
 def test_household_of_two(
     hub: Hub, client: TestClient, owner: dict[str, str], cashier_id: str
 ) -> None:
-    faces = [face(120, display_name="Rajesh Sharma"), face(140, display_name="Meena Sharma")]
+    faces = [
+        face(120, display_name="Rajesh Sharma"),
+        face(140, display_name="Meena Sharma", phone="9876500022"),
+    ]
     body = enrol(
         client, owner, cashier_id, faces=faces, household_label="Sharma family", payer_index=0
     ).json()
@@ -212,7 +236,7 @@ def test_one_refusal_in_a_household(
         return original(a, b)
 
     stub.run = run
-    body = enrol(client, owner, cashier_id, faces=[face(120), face(140)]).json()
+    body = enrol(client, owner, cashier_id, faces=[face(120), face(140, phone="9876500033")]).json()
     assert len(body["members"]) == 1 and body["refused"] == [
         {"face_index": 1, "reason": "under_18"}
     ]
@@ -241,7 +265,7 @@ def test_member_search_patch_remove(
         == "active"
     )
     gone = client.post(
-        f"/members/{mid}/remove", json={"staff_id": cashier_id}, headers=owner
+        f"/members/{mid}/remove", json={"staff_id": owner_staff_id(hub)}, headers=owner
     ).json()
     assert gone["status"] == "withdrawn" and gone["template_deleted_at"]
     assert hub.db.one("SELECT 1 FROM templates WHERE member_id = ?", (mid,)) is None
@@ -249,6 +273,8 @@ def test_member_search_patch_remove(
     recs = hub.db.all("SELECT * FROM consent_records WHERE member_id = ? ORDER BY rowid", (mid,))
     assert len(recs) == 2 and recs[1]["withdrawn_at"] and recs[1]["template_deleted_at"]
     assert recs[1]["channel"] == "owner_remove" and recs[1]["prev_hash"] == recs[0]["record_hash"]
+    assert recs[0]["cashier_id"] == cashier_id  # enrolled by the cashier
+    assert recs[1]["cashier_id"] == owner_staff_id(hub)  # removed by the owner, not the enroller
     assert verify_chain(hub.db).intact
     assert client.get("/members/m_nope", headers=owner).status_code == 404
 
@@ -318,7 +344,9 @@ def test_decision_writes_visit_and_alert(
     visits = client.get(f"/visits?member_id={mid}", headers=owner).json()
     assert visits[0]["id"] == p["visit_id"] and visits[0]["frames_agreed"] == 3
     fb = client.patch(
-        f"/visits/{p['visit_id']}", json={"greeted": True, "greeted_by": cashier_id}, headers=owner
+        f"/visits/{p['visit_id']}",
+        json={"greeted": True, "greeted_by": owner_staff_id(hub)},
+        headers=owner,
     ).json()
     assert fb["greeted"] is True
     types = {r["type"] for r in hub.db.all("SELECT type FROM events_outbox")}
@@ -367,3 +395,36 @@ def test_clips_are_lan_only(hub: Hub, owner: dict[str, str]) -> None:
 
     assert is_lan("192.168.1.20") and is_lan("10.0.0.5") and is_lan("127.0.0.1")
     assert not is_lan("8.8.8.8") and not is_lan(None)
+
+
+def test_enrol_without_models_is_503(tmp_path: Path) -> None:
+    from remu_hub.faces.models import ModelError
+    from remu_hub.settings import load_settings
+
+    def broken(_: bytes) -> Any:
+        raise ModelError("model files missing")
+
+    settings = load_settings(
+        {
+            "REMU_DATA_DIR": str(tmp_path / "d"),
+            "REMU_SHOP_ID": "shop-1",
+            "REMU_RTSP_GATE_URL": "rtsp://x",
+        }
+    )
+    hub = Hub(settings, engine_factory=broken)
+    client = TestClient(create_app(hub))
+    token = client.post("/pair", json={"code": auth.create_hub_code(hub.db)}).json()["app_token"]
+    staff = auth.add_staff(hub.db, "shop-1", "Ravi", "cashier", "4821")
+    r = enrol(client, {"Authorization": f"Bearer {token}"}, staff)
+    assert r.status_code == 503 and r.json()["error"] == "unavailable"
+
+
+def test_household_faces_need_their_own_phone(
+    client: TestClient, owner: dict[str, str], cashier_id: str
+) -> None:
+    r = enrol(client, owner, cashier_id, faces=[face(120), face(140)])
+    assert r.status_code == 422 and r.json() == {
+        "error": "phone_required",
+        "detail": "face 1 needs its own WhatsApp number",
+        "face_index": 1,
+    }

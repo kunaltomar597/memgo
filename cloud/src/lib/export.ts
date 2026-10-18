@@ -40,16 +40,27 @@ export async function loadExport(db: Db, shopId: string, now: Date): Promise<Exp
   };
 }
 
-function csvCell(v: unknown): string {
+/**
+ * CSV formula injection (TASK-112): a cell that starts with =, +, -, @, tab or carriage return gets a
+ * leading single quote so a spreadsheet shows it as text. A cell that already starts with a quote
+ * gets one more, so a reader restores the stored value exactly by dropping one leading quote from
+ * any cell that starts with a quote.
+ */
+export function neutraliseFormula(s: string): string {
+  return /^[=+\-@\t\r']/.test(s) ? `'${s}` : s;
+}
+
+export function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = typeof v === "object" ? canonicalJson(v) : String(v);
+  const s = neutraliseFormula(typeof v === "object" ? canonicalJson(v) : String(v));
   return /[",\r\n#]/.test(s) || /^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /**
  * CSV: a header row with the columns of docs/API_CONTRACT.md section 3, one row per record in chain
  * order (JSON columns as canonical JSON), then trailing comment lines that start with "#" giving
- * the chain head and the latest anchor. The signature covers every byte, trailer included.
+ * the chain head and the latest anchor. Cells are neutralised against formula injection
+ * (neutraliseFormula) before quoting; the signature covers the final bytes, trailer included.
  */
 export function renderCsv(d: ExportData): string {
   const lines = [CONSENT_COLUMNS.join(",")];

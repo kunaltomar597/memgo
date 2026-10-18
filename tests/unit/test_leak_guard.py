@@ -24,7 +24,7 @@ from remu_hub.match.decide import Decision, Kind
 from remu_hub.observability import before_send
 from remu_hub.sync import outbox
 from remu_hub.video.source import TimedFrame
-from tests.helpers import face, make_hub
+from tests.helpers import deliver_and_activate, face, make_hub
 
 ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_KEY = re.compile(
@@ -53,7 +53,7 @@ def test_no_biometric_bytes_leave_the_hub(tmp_path: Path, caplog: pytest.LogCapt
         )
     )
     mid = res["members"][0]["member_id"]
-    hub.activate(mid)
+    deliver_and_activate(hub, mid)
     tf = TimedFrame(time.time(), np.zeros((360, 640, 3), np.uint8))
     hub.on_decision(Decision(Kind.ALERT, mid, 0.9, 3, 5, tf.ts, tf.ts, 1), tf)
     template = np.frombuffer(

@@ -16,12 +16,19 @@ data class BillingForm(
     val notes: String = "",
     val householdLabel: String = "",
     val payerIndex: Int = 0,
-    /** Optional names and phones for adults 2 to 6 in a household. */
+    /**
+     * Household only, indexed by face (selection order). The name and phone fields above belong to
+     * the payer; every other adult has their own phone here, which the hub requires so each
+     * adult's written notice goes to their own number (docs/API_CONTRACT.md 7.5). Names are optional.
+     */
     val adultNames: List<String> = emptyList(),
     val adultPhones: List<String> = emptyList(),
 )
 
-enum class FieldError { PHONE_EMPTY, PHONE_INVALID, AMOUNT_EMPTY, AMOUNT_INVALID, BILL_NO, NAME_EMPTY, TOO_LONG, HOUSEHOLD_LABEL, ADULT_PHONE_INVALID }
+enum class FieldError {
+    PHONE_EMPTY, PHONE_INVALID, AMOUNT_EMPTY, AMOUNT_INVALID, BILL_NO, NAME_EMPTY, TOO_LONG, HOUSEHOLD_LABEL,
+    ADULT_PHONE_INVALID, ADULT_PHONE_REQUIRED, ADULT_PHONE_SAME,
+}
 
 /** Per-field errors; empty means the form can be sent. */
 data class FormErrors(val byField: Map<String, FieldError> = emptyMap()) {
@@ -31,6 +38,9 @@ data class FormErrors(val byField: Map<String, FieldError> = emptyMap()) {
 
 /** Builds the `POST /enrol` body from the form and the in-memory crops (docs/API_CONTRACT.md 1). */
 object EnrolPayloadBuilder {
+    /** The form key of face [i]'s own phone field in a household. */
+    fun adultPhoneKey(i: Int) = "adultPhone$i"
+
     fun validate(form: BillingForm, faceCount: Int): FormErrors {
         val e = mutableMapOf<String, FieldError>()
         when (Validation.phoneError(form.phone)) {
@@ -52,9 +62,18 @@ object EnrolPayloadBuilder {
         if (faceCount > 1) {
             if (form.householdLabel.isBlank()) e["householdLabel"] = FieldError.HOUSEHOLD_LABEL
             if (form.householdLabel.length > Validation.MAX_LABEL) e["householdLabel"] = FieldError.TOO_LONG
-            for (i in 1 until faceCount) {
-                val p = form.adultPhones.getOrNull(i - 1).orEmpty()
-                if (p.isNotBlank() && Validation.normalisePhone(p) == null) e["adultPhone$i"] = FieldError.ADULT_PHONE_INVALID
+            val payer = form.payerIndex.coerceIn(0, faceCount - 1)
+            val seen = mutableSetOf<String>()
+            Validation.normalisePhone(form.phone)?.let { seen += it }
+            for (i in 0 until faceCount) {
+                if (i == payer) continue
+                val p = form.adultPhones.getOrNull(i).orEmpty()
+                val national = Validation.normalisePhone(p)
+                when {
+                    p.isBlank() -> e[adultPhoneKey(i)] = FieldError.ADULT_PHONE_REQUIRED
+                    national == null -> e[adultPhoneKey(i)] = FieldError.ADULT_PHONE_INVALID
+                    !seen.add(national) -> e[adultPhoneKey(i)] = FieldError.ADULT_PHONE_SAME
+                }
             }
         }
         return FormErrors(e)
@@ -62,16 +81,23 @@ object EnrolPayloadBuilder {
 
     /**
      * [crops] in selection order: crop 0 is adult 1. With zero crops this is a phone member (bill
-     * only, no consent record for recognition). Household fields go only with two or more faces.
+     * only, no consent record for recognition). Household fields go only with two or more faces;
+     * then every face carries its `phone`: the payer's is the main phone, every other adult's is
+     * their own. A non-payer's name falls back to the top-level name on the hub when left empty.
      */
     fun build(form: BillingForm, crops: List<FaceCrop>, staffId: String): EnrolRequest {
         val b64 = Base64.getEncoder()
+        val household = crops.size >= 2
+        val payer = if (household) form.payerIndex.coerceIn(0, crops.size - 1) else 0
         val faces = crops.mapIndexed { i, crop ->
-            val name = if (i == 0) null else form.adultNames.getOrNull(i - 1)?.trim()?.ifEmpty { null }
-            val phone = if (i == 0) null else form.adultPhones.getOrNull(i - 1)?.let { Validation.toE164(it) }
+            val name = if (!household || i == payer) null else form.adultNames.getOrNull(i)?.trim()?.ifEmpty { null }
+            val phone = when {
+                !household -> null
+                i == payer -> Validation.toE164(form.phone)
+                else -> form.adultPhones.getOrNull(i)?.let { Validation.toE164(it) }
+            }
             EnrolFace(cropJpegB64 = b64.encodeToString(crop.jpeg), landmarks = crop.landmarks, displayName = name, phone = phone)
         }
-        val household = crops.size >= 2
         return EnrolRequest(
             staffId = staffId,
             phone = Validation.toE164(form.phone) ?: form.phone.trim(),
@@ -82,7 +108,7 @@ object EnrolPayloadBuilder {
             occasion = form.occasion.trim().ifEmpty { null },
             notes = form.notes.trim().ifEmpty { null },
             householdLabel = if (household) form.householdLabel.trim() else null,
-            payerIndex = if (household) form.payerIndex.coerceIn(0, crops.size - 1) else null,
+            payerIndex = if (household) payer else null,
             faces = faces,
         )
     }

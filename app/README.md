@@ -59,7 +59,14 @@ One ViewModel and one UI state class per screen. Screens never touch OkHttp. The
 - Face crops: JPEG in memory, under 300 KB, wiped after the hub replies, never written to disk. OkHttp runs with no cache. Tests check that no image-like file is left in app storage (Robolectric and on device).
 - FCM: only `shop_id`, `visit_id` and `member_id` are read. The card is fetched from the hub on the shop WiFi or the cloud off it, and the notification is built on the phone. The lock screen shows "Member at the gate" only.
 - Sentry: off unless `SENTRY_DSN` is set. `send_default_pii` is off, screenshots and view hierarchy are off, and `SentryScrubber` removes the user, the request, phone numbers, e-mail addresses, tokens, base64 blobs and every field named like phone, name, notes, items, vec, landmarks, image, crop, token or key.
-- `FLAG_SECURE` is set on the alert, member, member search and household screens. Clips play from memory over the LAN only.
+- `FLAG_SECURE` is set on the Cashier camera and enrol screen and on the alert, member, member search and household screens. Clips play from memory over the LAN only.
+- Staff sessions (docs/API_CONTRACT.md 7.1): the `staff_session` from `POST /staff/verify-pin` lives only in the in-memory `StaffSession`, never in the DataStore. `HubClient` sends it as `X-Remu-Staff-Session` on every write route the contract lists. A 401 `staff_session_required` ends the session and returns to the PIN screen ("Enter your PIN again to continue."); inside the setup wizard it asks for the owner PIN in place. The wizard's first-owner `POST /staff` goes without a session, then verifies the same PIN to get one.
+- Owner-only data (7.2): `/ws` and `/clips` are opened only in Owner mode on the owner-paired phone (`AppContainer.ownerDataAllowed`). Switching to Cashier mode closes the socket. A 403 on `/ws` stops reconnecting; a 403 on a clip shows a plain line.
+- Paired phones (7.3): Owner settings, "Paired phones" lists `GET /tokens`; Revoke asks first, then calls `POST /tokens/{id}/revoke`. This phone's own row (SHA-256 of its token, first 12 hex) is labelled and cannot be revoked from itself.
+- Certificate check (7.4): after an owner pairing and whenever `GET /api/shops/{id}/devices` loads (Owner home, Device status), the pinned fingerprint must be one of the devices' `cert_sha256`. A mismatch clears the hub token and fingerprint and shows "This is not your shop's hub." A device list without fingerprints is not a mismatch. The invite QR carries `&fp=`; the counter phone's first-contact trust manager fails the handshake on any other certificate, so the invite code never reaches that host.
+- Claimed shop (7.6): `cloud_shop_id` from `GET /health` is shown in the setup wizard and Device status. During pairing (and later in the wizard) a hub claimed by another shop is unpaired with "This hub belongs to another shop."
+- Locked hub (7.7): a 423 from any hub route sets `HubStatus.lockedOut`: the banner "Hub is locked. Ask Remu support." shows in both modes, `onLan` turns false so LAN-only actions are disabled (Owner mode falls back to the cloud), and Make member stops. Each health check then probes `GET /staff` and clears the state once the hub answers normally.
+- Consent export files in `cache/exports` are deleted when the share sheet returns, and files older than an hour are deleted at app start.
 
 ## Assumptions (to fold into docs/ARCHITECTURE.md and docs/DECISIONS.md in the phase documentation tasks)
 
@@ -68,12 +75,13 @@ One ViewModel and one UI state class per screen. Screens never touch OkHttp. The
 - `GET /clips/{id}`: the LAN visit row has `has_clip` but no clip id, so the app requests `/clips/{clip_id}` when the hub sends `clip_id` and `/clips/{visit_id}` otherwise. The hub should accept the visit id, or add `clip_id` to the visit row.
 - The hub has no alert-card route, so an FCM push on the shop WiFi builds the card from `GET /members/{id}` and `GET /visits`.
 - Setup routes not shaped by the contract: `GET /discover` returns `{"streams":[{"id","label","url"}]}`, `PUT /settings/streams` takes `{"gate_url"}`, and `GET /preview` is multipart MJPEG.
-- The counter phone's invite QR encodes `remu://pair?host=<hub address>&code=<invite code>`.
+- The counter phone's invite QR encodes `remu://pair?host=<hub address>&code=<invite code>&fp=<fingerprint>`; a QR without `fp` still pairs, checked against `cert_sha256` only.
 - The setup wizard asks for the owner's PIN (`POST /staff`, role owner) right after pairing when the hub has no owner yet.
 - Owner mode with the hub out of reach: the hub cannot check a PIN, so a phone paired as owner with a valid cloud session can continue using the last owner staff id. Cashier mode has no such path. Owner mode asks for the PIN again after 15 minutes idle.
 - Phone numbers go to the hub as E.164 (`+919876543210`).
 - Make member waits up to 8 seconds for the hub. The camera stays live meanwhile.
 - The "skip face" count is kept on the phone (`skipFaceCount`). The contract has no route that reports it to the cloud yet (TASK-127).
-- A household's extra adults may each have their own name and phone in the form. They fall back to the top-level values.
+- In a household the main name and phone belong to the payer. Every other adult has their own phone field (required, a valid 10-digit mobile, different from the others) and an optional name that falls back to the top-level name. Every face then carries `phone`. A 422 `phone_required` highlights that adult's field.
+- A 423 `locked` is shown as "Hub is locked. Ask Remu support." even while `GET /health` says `locked: true`, because the app cannot tell a revoked hub from one waiting for its unlock token.
 - Owner settings show shop name and city read-only, because the contract has no shop update route. Reset PIN and remove staff are not built, because the contract has no route for them.
 - OPEN items resolved provisionally: lock-screen text is "Member at the gate" only, and the Hindi button labels are "स्वागत किया" and "ये नहीं" as proposed in docs/DESIGN.md. The app icon is a placeholder until a wordmark exists.

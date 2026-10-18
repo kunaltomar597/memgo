@@ -81,6 +81,7 @@ def init_sentry(dsn: str | None, shop_id: str) -> bool:
         release=f"remu-hub@{__version__}",
         before_send=before_send,  # type: ignore[arg-type]
         send_default_pii=False,
+        include_local_variables=False,  # locals hold names, notes and template floats
         max_request_body_size="never",
         traces_sample_rate=0.0,
     )

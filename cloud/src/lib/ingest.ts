@@ -9,6 +9,7 @@ import { ApiError } from "./http";
 import { log } from "./log";
 import { transition } from "./memberState";
 import { prepareNotice, sendPreparedNotice, type NoticeRequest } from "./notice";
+import { findForbidden } from "./payloadGuard";
 import { pushAlert } from "./push";
 import { EVENT_SCHEMAS, eventEnvelopeSchema, zodReason, type EventPayload, type EventType } from "./schemas";
 import { reportMessage } from "./sentry";
@@ -87,6 +88,13 @@ async function orderConsentEvents(db: Db, shopId: string, events: Envelope[]): P
 }
 
 async function applyOne(deps: Deps, device: Device, ev: Envelope): Promise<EventResult> {
+  // Privacy invariant 3, per event (docs/API_CONTRACT.md section 7 item 8): nothing of a forbidden
+  // payload is written, and the rest of the batch is still processed.
+  const violation = findForbidden(ev.payload, "$.payload");
+  if (violation) {
+    log.warn("payload_forbidden", { event_id: ev.id, reason: violation.reason });
+    return reject(ev, "payload_forbidden");
+  }
   const known = await deps.db.query("select 1 from hub_events where id = $1", [ev.id]);
   if (known.length > 0) return { id: ev.id, status: "acked" };
 
@@ -140,6 +148,9 @@ async function memberOfShop(tx: Db, device: Device, memberId: string) {
 
 const applyConsent: Applier<"consent_record"> = async (tx, deps, device, rec) => {
   sameShop(device, rec.shop_id);
+  // A record for a member mirrored under another shop is refused (TASK-112).
+  const member = await getMember(tx, rec.member_id);
+  if (member && member.shop_id !== device.shop_id) throw new Reject("shop_mismatch");
   // Serialise chain writes per shop.
   await tx.query("select 1 from shops where id = $1 for update", [rec.shop_id]);
   const existing = await tx.query("select 1 from consent_records where id = $1", [rec.id]);
@@ -237,13 +248,25 @@ const applyHousehold: Applier<"household_upsert"> = async (tx, _deps, device, h)
   return undefined;
 };
 
-const applyStaff: Applier<"staff_upsert"> = async (tx, _deps, device, s) => {
+/**
+ * Hub staff rows. A row the cloud authored (the owner row of POST /api/shops, user_id set) is never
+ * changed from hub data: the event is acked and skipped (TASK-112). user_id is never written here.
+ */
+const applyStaff: Applier<"staff_upsert"> = async (tx, _deps, device, s, ev) => {
   sameShop(device, s.shop_id);
-  const existing = await tx.query<{ shop_id: string }>("select shop_id from staff where id = $1", [s.id]);
+  const existing = await tx.query<{ shop_id: string; user_id: string | null }>(
+    "select shop_id, user_id::text as user_id from staff where id = $1 for update",
+    [s.id],
+  );
   if (existing[0] && existing[0].shop_id !== s.shop_id) throw new Reject("shop_mismatch");
+  if (existing[0]?.user_id) {
+    log.info("staff_upsert_skipped", { event_id: ev.id, shop_id: s.shop_id, reason: "cloud_authored" });
+    return undefined;
+  }
   await tx.query(
     `insert into staff (id, shop_id, name, role, created_at) values ($1, $2, $3, $4, $5::timestamptz)
-     on conflict (id) do update set name = excluded.name, role = excluded.role, updated_at = now()`,
+     on conflict (id) do update set name = excluded.name, role = excluded.role, updated_at = now()
+     where staff.user_id is null`,
     [s.id, s.shop_id, s.name, s.role, s.created_at],
   );
   return undefined;

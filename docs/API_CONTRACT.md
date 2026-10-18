@@ -150,7 +150,7 @@ Event payloads:
 - `alert`: `{"visit_id", "member_id", "ts"}`.
 - `health`: the `GET /health` body.
 
-The cloud rejects with 400 `payload_forbidden` any event whose payload has a key containing `vec`, `template`, `image`, `crop`, `clip`, `jpeg` or `embedding` (except the boolean `has_template`), or any string over 1,024 characters that decodes as base64.
+The cloud rejects, as that event's result `rejected` with reason `payload_forbidden` (section 7 item 8), any event whose payload has a key containing `vec`, `template`, `image`, `crop`, `clip`, `jpeg` or `embedding` (except the boolean `has_template`), or any string over 1,024 characters that decodes as base64.
 
 ### GET /api/hub/inbox?after=<cursor>
 
@@ -208,8 +208,22 @@ FCM data message: `{"shop_id", "visit_id", "member_id"}` and nothing else.
 ## 6. Behaviour settled during the build
 
 - Owner shops are read by the app from Supabase (`rest/v1/shops`, scoped by Row Level Security); there is no cloud route that lists them.
-- A `400 payload_forbidden` from `POST /api/hub/events` rejects the whole batch. The hub's own allowlist makes this unreachable in practice.
+- A forbidden payload is rejected per event, never for the whole batch (section 7 item 8). The hub applies the same rule before queuing, and splits a batch that still gets a 400.
 - `notice_status` arrives for `sent`, `read` and `failed` too. Only `delivered` activates; the hub records `delivered` and `failed` in the chain and ignores the rest.
 - A claim after the device token was issued returns 409; a lost token means re-provisioning.
 - An empty chain anchors as `sha256:genesis`.
 - The invite QR code encodes `remu://pair?host=<hub address>&code=<invite code>`.
+
+## 7. Security review changes (TASK-112, 2026-10-18)
+
+These change sections 1 to 4. Where they differ, this section wins.
+
+1. **Staff sessions.** `POST /staff/verify-pin` also returns `"staff_session": "<opaque>"`, valid 12 hours. Every hub write route requires the header `X-Remu-Staff-Session: <staff_session>`: `POST /enrol`, `POST /members/{id}/remove`, `POST /members/{id}/purchases`, `PATCH /members/{id}`, `POST /households`, `PATCH /households/{id}`, `PATCH /visits/{id}`, `POST /staff`, `POST /pair/invite`, `POST /discover`, `PUT /settings/streams`. The hub attributes the write to the session's staff id. A `staff_id` in the body must equal it (400 otherwise). Without a valid session: 401 `{"error": "staff_session_required"}`. Exception: `POST /staff` is allowed without a session only while the hub has no staff row at all (first owner setup).
+2. **Owner-only data.** `GET /clips/{id}` and `GET /ws` accept owner app tokens only. A counter token gets 403.
+3. **Tokens.** `GET /tokens` (owner) returns `[{"id", "role", "created_at", "revoked_at"}]`, where `id` is the first 12 hex characters of the token hash. `POST /tokens/{id}/revoke` (owner) revokes it at once. A new invite cancels any older unused invite.
+4. **Certificate check.** The hub sends `"cert_sha256"` in `POST /api/devices/claim`. The cloud stores it, and `GET /api/shops/{id}/devices` returns it per device. After pairing, Owner mode compares the fingerprint it pinned with the cloud's. A mismatch unpairs the phone and shows "This is not your shop's hub". The invite QR code carries `&fp=<fingerprint>`, and the counter phone refuses a hub whose certificate differs.
+5. **Households.** With two or more faces, every face other than the payer must carry its own `phone`. Otherwise the hub answers 422 `{"error": "phone_required", "face_index": n}`. Each adult's written notice goes to their own number.
+6. **Claimed shop.** `GET /health` adds `"cloud_shop_id"`: null until the hub is claimed, then the cloud shop id. Owner mode shows it during setup and refuses a hub claimed by another shop.
+7. **Locked hub.** While the hub is revoked or its data directory is locked, every route except `GET /health` answers 423 `{"error": "locked"}`, and matching stops. The revoked state survives a restart.
+8. **Ingest rejects per event.** `POST /api/hub/events` marks a forbidden payload as `rejected` with reason `payload_forbidden` for that event only, and processes the rest. The hub applies the same base64 rule as the cloud before queuing. `notes` is capped at 1000 characters and `greeted_by` must be a staff id.
+9. **Cloud retention.** The cloud clears `whatsapp_messages.phone_e164` once a send reaches `delivered`, `read` or `failed`, and on withdrawal. Raw webhook JSON is stored with sender and recipient numbers replaced by `phone_hash`, and with the text body of anything other than a STOP dropped.

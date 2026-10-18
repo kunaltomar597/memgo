@@ -4,7 +4,9 @@ export interface DeviceRecord {
   id: string;
   shop_id: string | null;
   serial: string;
+  /** Lowercase hex SHA-256 of the normalised pairing code (0008), never the code. */
   pairing_code: string;
+  cert_sha256: string | null;
   status: "provisioned" | "paired" | "unpaired" | "revoked";
   generation: number;
   token_hash: string | null;
@@ -26,10 +28,11 @@ export async function getDevice(db: Db, id: string): Promise<DeviceRecord | unde
   return rows[0];
 }
 
-export async function getDeviceByCode(db: Db, code: string, forUpdate = false): Promise<DeviceRecord | undefined> {
+/** Looks a device up by pairingCodeHash(code) (devices.ts); the plain code is never stored. */
+export async function getDeviceByCode(db: Db, codeHash: string, forUpdate = false): Promise<DeviceRecord | undefined> {
   const rows = await db.query<DeviceRecord>(
     `select * from devices where pairing_code = $1 ${forUpdate ? "for update" : ""}`,
-    [code],
+    [codeHash],
   );
   return rows[0];
 }

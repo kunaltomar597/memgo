@@ -16,15 +16,25 @@ export function normaliseCode(code: string): string {
 }
 export const PAIRING_CODE_RE = /^[A-Z0-9]{4,12}(-[A-Z0-9]{2,12})?$/;
 export const SERIAL_RE = /^[A-Za-z0-9._:-]{4,64}$/;
+/** The hub's TLS certificate fingerprint: SHA-256 as colon-separated uppercase hex (32 bytes). */
+export const CERT_SHA256_RE = /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/;
+
+/**
+ * devices.pairing_code stores this, never the code (TASK-112): lowercase hex SHA-256 of the
+ * normalised code. Every lookup hashes first.
+ */
+export function pairingCodeHash(code: string): string {
+  return sha256Hex(normaliseCode(code));
+}
 
 /** POST /api/ops/devices: a provisioned hub, generation 1, not yet linked to a shop. */
 export async function registerDevice(db: Db, pairingCode: string, serial: string): Promise<string> {
-  const code = normaliseCode(pairingCode);
+  const codeHash = pairingCodeHash(pairingCode);
   const id = prefixedId("d");
   const rows = await db.query<{ id: string }>(
     `insert into devices (id, serial, pairing_code, status, generation) values ($1, $2, $3, 'provisioned', 1)
      on conflict (pairing_code) do nothing returning id`,
-    [id, serial, code],
+    [id, serial, codeHash],
   );
   if (rows.length === 0) throw new ApiError(409, "conflict", "pairing code already registered");
   log.info("device_registered", { device_id: id });
@@ -49,10 +59,10 @@ export async function pairDevice(
   ) {
     throw new ApiError(429, "rate_limited", "too many wrong pairing codes");
   }
-  const code = normaliseCode(args.code);
+  const codeHash = pairingCodeHash(args.code);
   const result = await db.tx(async (tx) => {
-    const d = await getDeviceByCode(tx, code, true);
-    if (!d || !constantTimeEqual(d.pairing_code, code)) return { kind: "wrong" as const };
+    const d = await getDeviceByCode(tx, codeHash, true);
+    if (!d || !constantTimeEqual(d.pairing_code, codeHash)) return { kind: "wrong" as const };
     if (d.status !== "provisioned" || d.shop_id !== null) return { kind: "used" as const };
     await tx.query(
       `update devices set shop_id = $2, status = 'paired', paired_at = $3::timestamptz, paired_by = $4::uuid,
@@ -79,15 +89,24 @@ export type ClaimResult =
 
 /**
  * POST /api/devices/claim: the hub polls with its code and serial. 202 pending until an owner pairs
- * the code, then the device token exactly once. Only its SHA-256 is stored.
+ * the code, then the device token exactly once. Only its SHA-256 is stored. The hub's certificate
+ * fingerprint (cert_sha256, optional) is stored on every claim until the token is issued, so the
+ * stored value is the one sent with the claim that received the token (TASK-112).
  */
-export async function claimDevice(db: Db, args: { code: string; serial: string; ip: string; now: Date }): Promise<ClaimResult> {
+export async function claimDevice(
+  db: Db,
+  args: { code: string; serial: string; certSha256?: string; ip: string; now: Date },
+): Promise<ClaimResult> {
   const ipKey = `claim:ip:${args.ip}`;
   if (await isRateLimited(db, ipKey, 10, 60, args.now)) throw new ApiError(429, "rate_limited", "too many wrong claims");
-  const code = normaliseCode(args.code);
+  const codeHash = pairingCodeHash(args.code);
   const out = await db.tx(async (tx): Promise<ClaimResult | "wrong" | "claimed" | "revoked"> => {
-    const d = await getDeviceByCode(tx, code, true);
+    const d = await getDeviceByCode(tx, codeHash, true);
     if (!d || !constantTimeEqual(d.serial, args.serial)) return "wrong";
+    const issuable = d.status === "provisioned" || (d.status === "paired" && d.shop_id !== null && !d.token_hash);
+    if (args.certSha256 && issuable) {
+      await tx.query("update devices set cert_sha256 = $2, updated_at = now() where id = $1", [d.id, args.certSha256]);
+    }
     if (d.status === "provisioned") return { status: "pending" };
     if (d.status !== "paired" || !d.shop_id) return "revoked";
     if (d.token_hash) return "claimed";
@@ -169,5 +188,6 @@ export function deviceStatusView(d: DeviceRecord, now: Date) {
     online,
     locked: d.locked,
     chain_break: d.chain_break || d.anchor_mismatch,
+    cert_sha256: d.cert_sha256 ?? null,
   };
 }

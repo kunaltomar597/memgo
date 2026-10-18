@@ -45,7 +45,9 @@ class Settings:
 
     @property
     def models_dir(self) -> Path:
-        return self.data_dir / "models"
+        """Model packs are not member data; on the Pi they live in /opt/remu/models."""
+        explicit = os.environ.get("REMU_MODELS_DIR")
+        return Path(explicit) if explicit else self.data_dir / "models"
 
     @property
     def clips_dir(self) -> Path:
@@ -53,7 +55,14 @@ class Settings:
 
     @property
     def certs_dir(self) -> Path:
-        return self.data_dir / "certs"
+        """The LAN certificate sits with the state files: its fingerprint goes in the claim,
+        which happens before the encrypted data directory can open (review H5, M3)."""
+        return self.state_dir / "certs"
+
+    @property
+    def require_encrypted(self) -> bool:
+        """On the Pi (REMU_REQUIRE_ENCRYPTED=1) the hub refuses to serve from a plain folder."""
+        return os.environ.get("REMU_REQUIRE_ENCRYPTED") == "1"
 
     @property
     def state_dir(self) -> Path:

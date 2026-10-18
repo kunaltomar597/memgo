@@ -57,6 +57,8 @@ def rtsp_hosts(
     connect: Callable[[str, int, float], bool] | None = None,
 ) -> list[str]:
     net = ipaddress.ip_network(subnet, strict=False)
+    if not net.is_private or net.prefixlen < 22:
+        raise ValueError("discovery scans a private network of at most /22 (1,024 addresses)")
     probe = connect or _tcp_open
     hosts = [str(h) for h in net.hosts()]
     with cf.ThreadPoolExecutor(max_workers=64) as pool:
