@@ -1,0 +1,36 @@
+---
+description: Rules for the Remu Android app (Cashier mode and Owner mode); the owner web dashboard joins in a later phase
+globs: app/**
+alwaysApply: false
+---
+# Remu frontend rules
+
+Rules for everything under `app/`. The App rules and UI rules in docs/RULES.md are the source; docs/DESIGN.md gives the visual system. Written 2026-10-18.
+
+## Stack
+
+- Kotlin, Jetpack Compose, minimum SDK 26, Gradle. CameraX for the preview, ML Kit for on-phone face detection, Firebase Cloud Messaging for Owner mode pushes.
+- One app, two modes chosen at login: Cashier mode and Owner mode. Shared code lives once. Never fork the app.
+- Checks before a task is complete: `cd app && ./gradlew lint`, `./gradlew test`, `./gradlew connectedAndroidTest`.
+
+## Data and network
+
+- No direct SQLite. No Room, no SQLiteOpenHelper, no database of any kind in the app. The hub is the source of truth over the LAN; the cloud relays alerts. Keep only what a screen needs, in memory.
+- Network goes only through `HubClient` (LAN HTTPS to the hub with the certificate pinned at pairing, plus the WebSocket for events) and `CloudClient` (HTTPS to `REMU_CLOUD_URL`). No other class opens a connection.
+- ML Kit detects faces and landmarks and draws a box on every face. The phone never computes an embedding. A face crop is sent to the hub and dropped; it is never written to disk, cache, logs or a crash report.
+- Owner mode deduplicates alerts by `visit_id` across FCM and the LAN WebSocket. Clips play over the LAN only and are never saved or shared.
+- Secrets (device token, pinned certificate fingerprint, session token) are stored encrypted with an Android Keystore key. Never in plain SharedPreferences, never in logs. `google-services.json` is never committed. The app never stores a staff PIN.
+
+## Strings and UI
+
+- Every user-facing string lives in `res/values/strings.xml` (English) and `res/values-hi/strings.xml` (Hindi). No string literals in composables. A new string is added in both languages in the same task.
+- The cashier line, the alert card format "{name} · {household label} · Last visit {date} · ₹{amount}, {items} · Note: {notes}" and the buttons "Make member", "Greeted" and "Not them" use the exact wording in docs/PRD.md. Consent wording is versioned (`hi-IN-v1.0` for the script, `wa-v1.0` for the notice); changing a word is a new version with lawyer sign-off and an ADR.
+- Follow docs/DESIGN.md. Every screen has loading, empty, error and offline states. Cashier mode shows the offline indicator when the hub is unreachable and shows a member as notice pending until the cloud confirms delivery.
+- Cashier mode is used standing and one-handed: large tap targets, one primary action per screen, the single "Make member" button at the bottom. The script line is on screen in Hindi and English. The largest, closest face is pre-selected; a tap changes the selection or adds an adult to a household.
+- Skipping the face tap is a normal path, not an error. The bill completes and nothing about the face is kept.
+- Each phone has its own language setting (Hindi or English): chosen on the login screen, changeable in Settings in either mode, persisted on that phone. Cashier mode and Owner mode run on different phones, so one setting never changes the other phone.
+- The counter phone screen faces the cashier, never the customer. Nothing reacts at the gate.
+
+## Later
+
+- When the owner web dashboard is built under `cloud/app/` (later phase), add `cloud/app/**` to the globs above. API routes under `cloud/app/api/` stay on backend.mdc.

@@ -1,0 +1,38 @@
+---
+description: Testing rules for Remu hub, app and cloud tests and the evaluation harness
+globs: tests/**, hub/tests/**, app/app/src/test/**, app/app/src/androidTest/**, cloud/**/*.test.ts
+alwaysApply: false
+---
+# Remu testing rules
+
+Rules for every test in the repository. The Testing rules in docs/RULES.md are the source; docs/TEST_PLAN.md says what "working" means per feature. Written 2026-10-18.
+
+## Always
+
+- Every task adds or updates tests for what it changed. A task is complete only when the component's lint, typecheck and tests pass and `make check` passes at the root.
+- Fix a failing test before writing new code. Never skip, weaken or delete a test to make a build green.
+- Unit tests never touch the internet. Mock the WhatsApp Cloud API, FCM and Supabase. Integration tests that need a real service are marked and skipped with a reason when it is not configured.
+- Test data is synthetic. No real customer name, phone number or face in any fixture. Fake embeddings are random unit vectors. The fixture video shows only volunteers who signed a consent form, lives outside the repo and is fetched by `make setup`. Benchmark images for the eval harness stay on the developer machine and never go on a hub.
+- Tests use the exact names from docs/ARCHITECTURE.md and docs/PRD.md: tables (`members`, `templates`, `consent_records`, `visits`, `clips`, `events_outbox`), statuses (`pending_notice`, `active`, `withdrawn`, `expired`) and the `REMU_*` variables.
+- Layout: `hub/tests/` (pytest, unit and integration), `app/app/src/test/` (JUnit), `app/app/src/androidTest/` (Compose UI), `app/maestro/` (Maestro flows), `cloud/**/*.test.ts` (Vitest). Root `tests/`: `integration/` (hub against local cloud), `e2e/` (fake camera to app), `eval/` (the harness), `unit/` (shared fixtures and the privacy scanner in `scripts/`).
+
+## Hub (`hub/tests/`, pytest)
+
+- Cover: the chain function (append, verify, tamper detection, no update or delete path), the age gate (under 18 refused, no override), status gating (a `pending_notice` template is never loaded into the matcher), the 3 of 5 frame rule, the 10-minute cooldown, outbox flush and retry, the 1095-day expiry and 30-day clip cleanup jobs, offline enrolment.
+- Privacy scanner: after an enrolment and a match against the fake camera (`make fake-camera`), no image file exists under `REMU_DATA_DIR` except an encrypted clip, and the log contains no phone number.
+
+## App (`app/app/src/test/`, `app/app/src/androidTest/`)
+
+- `./gradlew test` for unit tests of `HubClient`, `CloudClient` and view models. `./gradlew connectedAndroidTest` for Compose UI tests of each screen's loading, empty, error and offline states, in both languages.
+- Maestro flows in `app/maestro/` for end-to-end: enrol a member, add a household, receive an alert, tap "Greeted", tap "Not them", remove a member.
+- A test proves that no crop is written to app storage after an enrolment.
+
+## Cloud (`cloud/**/*.test.ts`, Vitest)
+
+- Webhook tests use signed sample payloads for sent, delivered, read, "STOP" and thumbs-up, and prove that a bad signature gets 401 and that a repeated `wamid` is idempotent.
+- RLS tests run as a user from another shop and expect no rows. Schema tests prove that a request with image bytes, a vector or a clip field is rejected.
+- Playwright (`npx playwright test`) is added when the owner web dashboard exists (later phase).
+
+## Evaluation harness (`tests/eval/`)
+
+- Runs before any change to `REMU_MODEL_PACK`, the model version, `REMU_MATCH_THRESHOLD`, `REMU_FRAMES_REQUIRED` or `REMU_FRAMES_WINDOW` is merged. Reports true accept rate at a false accept rate of 0.1 percent, plus the age-gap, low-light and angle subsets. The report goes in the pull request.

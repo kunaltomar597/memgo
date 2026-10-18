@@ -1,0 +1,37 @@
+---
+description: Rules for the Remu hub (Python 3.11) and cloud (Next.js 15, TypeScript, Supabase, Vercel)
+globs: hub/**, cloud/**
+alwaysApply: false
+---
+# Remu backend rules
+
+Rules for `hub/` and `cloud/`. The Hub rules, Cloud rules and Security rules in docs/RULES.md are the source. Written 2026-10-18.
+
+## Hub (`hub/`, Python 3.11)
+
+- Package `remu_hub`, configuration in `pyproject.toml`, tests in `hub/tests/`. `ruff` for lint and format, `mypy` in strict mode, `pytest`. Checks: `cd hub && make lint`, `make typecheck`, `make test`.
+- Every function is typed. No `Any` in public signatures, no bare `except`.
+- Configuration comes only from the `REMU_*` and `SENTRY_DSN` variables in `.env.example`, loaded once at startup into a typed settings object. Defaults: `REMU_MODEL_PACK=buffalo_l`, `REMU_MATCH_THRESHOLD=0.45`, `REMU_FRAMES_REQUIRED=3`, `REMU_FRAMES_WINDOW=5`, `REMU_ALERT_COOLDOWN_MINUTES=10`, `REMU_CLIP_RETENTION_DAYS=30`, `REMU_MEMBER_EXPIRY_DAYS=1095`.
+- The matching loop (decode, detect, embed, scramble, match, alert) makes no network calls other than reading the RTSP stream. It writes to SQLite and `events_outbox`. Separate workers push LAN WebSocket events and flush the outbox to the cloud.
+- Matching: cosine similarity over scrambled templates of `active` members only, threshold 0.45, agreement in 3 of 5 consecutive frames, one alert per member per 10 minutes. A template whose `model_version` differs from the running pack is not matched.
+- InsightFace SCRFD plus ArcFace from `buffalo_l` (fallback `buffalo_sc`) on ONNX Runtime CPU. Packs are downloaded by `make setup`, never committed. Any model or threshold change needs the evaluation harness in `tests/eval/` and an ADR.
+- The scrambling matrix is derived from the shop key in a root-only file. The key is never logged, synced, exported or shown.
+- `consent_records` rows are written only by the chain function (`append_consent_record`), which sets `prev_hash` and `record_hash` (sha256). No update or delete path exists in code or migrations. Chain verification runs in tests after any migration.
+- SQLite access goes through one data layer module. No SQL strings in API handlers, jobs or the pipeline.
+- The hub opens no inbound port except the LAN FastAPI service (HTTPS, self-signed certificate pinned at pairing) and its WebSocket. Cloud sync is outbound HTTPS only, through `events_outbox`, so matching and enrolment work offline.
+- Jobs (expiry at 1095 days unseen, clip cleanup at 30 days, hash anchor, outbox flush, health report) are idempotent.
+- The hub fails closed: without the shop key or the data unlock token it serves `health` only.
+- The hub never stores a frame, crop or photo. The 5-second match clip is encrypted at rest and is the only footage. Logs are structured with ids only; never log a name, phone number, note, item, crop or vector.
+
+## Cloud (`cloud/`, Next.js 15, TypeScript, Supabase, Vercel)
+
+- `"strict": true`. Checks: `cd cloud && npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
+- India region only: Supabase in Mumbai (AWS ap-south-1), Vercel functions in `bom1`. No service outside India without an ADR.
+- Row Level Security on every table, policies in the same migration that creates the table. A shop's users see only their `shop_id` rows.
+- `SUPABASE_SERVICE_ROLE_KEY` is used only in server code (route handlers, server actions, jobs). Never in a client component, never under a `NEXT_PUBLIC_` name.
+- Every webhook verifies its signature before parsing. WhatsApp: `X-Hub-Signature-256` with `WHATSAPP_APP_SECRET`, plus the `WHATSAPP_VERIFY_TOKEN` handshake. Hub calls present the device token, checked against `devices.token_hash`. A bad signature gets 401 and the body is not logged.
+- Route handlers accept JSON only, validated by a strict schema that rejects unknown fields. No schema has a field for image data, vectors or clips. The cloud never stores a face image, template or clip.
+- Only the cloud moves a member to `active` (WhatsApp `delivered` webhook). `withdrawn` is set by the cloud on "STOP" and by the hub on a "Remove member" tap, synced up through `events_outbox` as a `member_upsert` event with status `withdrawn`. Webhooks are idempotent on (`wamid`, status): the same status for the same `wamid` twice changes nothing twice. Every status lands in `whatsapp_messages`, one row per `wamid`.
+- The mirrored `consent_records` table is insert-only. `hash_anchors` stores the nightly chain head per shop.
+- FCM pushes carry `shop_id` and `visit_id` only; the app fetches the card. OPEN: confirm with the lawyer, since Google's push servers are outside India.
+- Sentry runs with default PII sending off and request bodies stripped. Razorpay billing and the web dashboard are later phases.

@@ -1,0 +1,38 @@
+---
+description: Remu privacy invariants and before-coding rules, always on for every file in the repository
+globs:
+alwaysApply: true
+---
+# Remu general rules
+
+Always-on rules for the Remu repository. docs/RULES.md is the full rulebook and wins over this file. Written 2026-10-18.
+
+## What Remu is
+
+Remu is a "shop memory" for Indian retail: the hub recognises an opted-in returning member at the gate and the owner's phone shows a card so the owner can greet them by name. Three components: hub (`hub/`, Python 3.11), app (`app/`, Kotlin and Jetpack Compose, one Android app with Cashier mode and Owner mode), cloud (`cloud/`, Next.js 15, TypeScript, Supabase in Mumbai, Vercel bom1). Roles: member, owner, cashier. Member status: `pending_notice`, `active`, `withdrawn`, `expired`.
+
+## Before coding
+
+- Read docs/PRD.md, docs/ARCHITECTURE.md, docs/DESIGN.md, docs/RULES.md, TASKS.md and docs/MEMORY.md. For consent, members, templates, clips or webhooks also read docs/PRIVACY_AND_CONSENT.md and docs/SECURITY.md.
+- Inspect the existing code before writing new code. Reuse the module that already does the job. Do not duplicate logic.
+- Work one TASK id at a time, in TASKS.md order. Do not modify unrelated files. Do not widen scope past docs/PRD.md; the later-phase list stays out.
+- For a change touching more than three files, or any schema, API, job or member status transition, write the plan (files, functions, tests, risks) before editing.
+- Build prompts from docs/PROMPTS.md: CONTEXT, TASK, FILES, CONSTRAINTS, ACCEPTANCE CRITERIA, TESTING.
+- When a document does not give a detail, choose the simplest option and write it down as an assumption. Anything that needs a human starts with "OPEN:".
+- Finish every task with tests, lint, typecheck, `make check` at the root, a small conventional commit on a feature branch, a tick in TASKS.md and an update to docs/MEMORY.md (and an ADR in docs/DECISIONS.md for a decision).
+- Keep the surprise: nothing at the gate reacts. No screen, sound, light or visible camera behaviour.
+
+## Privacy invariants (code must never violate these)
+
+1. No face photo is ever written to disk, database, log, crash report or cloud. Crops live in memory until embedded, then are dropped. The only footage is the 5-second match clip: encrypted on the hub, deleted after 30 days, LAN only, never uploaded.
+2. Only the hub computes embeddings. The app sends an aligned crop with landmarks. Templates are scrambled with the per-shop key and never leave the hub.
+3. The cloud never accepts or stores image bytes, templates or clips. Its request schemas have no field for them.
+4. Members with status `pending_notice` are never matched. Only `active` templates are loaded into the matcher.
+5. `consent_records` is append-only. Every row is written through the chain function. Withdrawal, deletion and expiry are new chained records, never edits or deletes.
+6. "STOP" or "Remove member" deletes the template within one hour and logs `template_deleted_at` in the chain.
+7. The nightly job deletes templates unseen for 1095 days and clips older than 30 days, and logs it.
+8. An age estimate under 18 refuses enrolment. There is no override, flag or setting that bypasses it.
+9. Unenrolled faces at the gate are discarded within seconds. Nothing is stored about non-members; a companion or passer-by may appear incidentally in a member's encrypted 5-second clip (LAN only, deleted after 30 days) and is never detected or indexed (docs/PRIVACY_AND_CONSENT.md section 12).
+10. No PII in logs or error tracking: no names, phone numbers, notes, bill items, message text, crops or vectors. Log ids only.
+
+These have no feature flag, no debug mode and no temporary bypass. If a task cannot be done without breaking one, stop and raise it.
