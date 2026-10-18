@@ -36,6 +36,8 @@ fun pairErrorText(e: PairError): String = when (e) {
     PairError.CERT_MISMATCH -> stringResource(R.string.pairing_cert_mismatch)
     PairError.UNREACHABLE -> stringResource(R.string.error_hub_no_reply)
     PairError.FAILED -> stringResource(R.string.error_generic)
+    PairError.NOT_YOUR_HUB -> stringResource(R.string.hub_not_yours)
+    PairError.OTHER_SHOP -> stringResource(R.string.hub_other_shop)
 }
 
 @Composable

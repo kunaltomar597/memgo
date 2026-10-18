@@ -5,12 +5,17 @@ import androidx.lifecycle.viewModelScope
 import com.remu.app.AppContainer
 import com.remu.app.core.format.Validation
 import com.remu.app.data.session.WizardProgress
+import com.remu.app.data.state.HubIdentityProblem
+import com.remu.app.data.state.Mode
+import com.remu.app.data.state.StaffSession
+import com.remu.app.feature.pairing.HubIdentity
 import com.remu.app.feature.pairing.HubPairing
 import com.remu.app.feature.pairing.PairError
 import com.remu.app.feature.pairing.PairingViewModel
 import com.remu.app.network.ApiResult
 import com.remu.app.network.cloud.ShopCreate
 import com.remu.app.network.hub.DiscoveredStream
+import com.remu.app.network.hub.HubClient
 import com.remu.app.network.hub.StaffCreate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +27,10 @@ import kotlinx.coroutines.launch
 
 enum class SetupStep { SHOP, PAIR, STREAM, AIM, COUNTER, STANDEE }
 
-enum class SetupError { FIELDS, CLOUD, PAIR_CODE, HUB, PIN_INVALID, PIN_MISMATCH, NAME, NO_STREAMS }
+enum class SetupError { FIELDS, CLOUD, PAIR_CODE, HUB, PIN_INVALID, PIN_MISMATCH, NAME, NO_STREAMS, PIN_WRONG, NOT_OWNER_PIN, HUB_LOCKED }
+
+/** What `cloud_shop_id` in `GET /health` says about the paired hub (docs/API_CONTRACT.md 7.6). */
+enum class HubClaim { THIS_SHOP, UNCLAIMED, OTHER_SHOP }
 
 data class SetupUiState(
     val step: SetupStep = SetupStep.SHOP,
@@ -38,6 +46,9 @@ data class SetupUiState(
     val host: String = "",
     val code: String = "",
     val needsOwnerPin: Boolean = false,
+    /** The hub writes of the later steps need a staff session: ask for the owner PIN (contract 7.1). */
+    val needsOwnerLogin: Boolean = false,
+    val claim: HubClaim? = null,
     val ownerName: String = "",
     val pin: String = "",
     val pin2: String = "",
@@ -57,6 +68,15 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
     val state: StateFlow<SetupUiState> = _state.asStateFlow()
 
     init {
+        // A refused or missing staff session mid-setup asks for the owner PIN again, in the wizard.
+        viewModelScope.launch {
+            c.appState.staff.collect { st ->
+                if (st == null && needsSession(_state.value.step) && c.session.current.paired) {
+                    _state.update { it.copy(needsOwnerLogin = true, working = false) }
+                }
+            }
+        }
+        viewModelScope.launch { c.hubStatus.status.collect { h -> onHubHealth(h.health) } }
         viewModelScope.launch {
             val s = c.session.update { it.copy(wizard = it.wizard ?: WizardProgress(startedAtEpochMs = clock())) }
             val w = s.wizard!!
@@ -68,7 +88,8 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
                 )
             }
             if (_state.value.step == SetupStep.PAIR && s.paired) checkOwnerStaff()
-            if (_state.value.step == SetupStep.STREAM) discover()
+            else if (needsSession(_state.value.step) && c.appState.staff.value == null) _state.update { it.copy(needsOwnerLogin = true) }
+            else if (_state.value.step == SetupStep.STREAM) discover()
             while (isActive) {
                 val started = c.session.current.wizard?.startedAtEpochMs ?: clock()
                 _state.update { it.copy(elapsedMin = (clock() - started) / 60_000) }
@@ -77,9 +98,31 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
         }
     }
 
+    private fun needsSession(step: SetupStep) = step.ordinal >= SetupStep.STREAM.ordinal
+
+    /** Shows whom the hub is claimed by; a hub claimed by another shop is unpaired at once. */
+    private fun onHubHealth(health: com.remu.app.network.hub.HubHealth?) {
+        val sess = c.session.current
+        if (health == null || !sess.paired) { _state.update { it.copy(claim = null) }; return }
+        val claim = when {
+            health.cloudShopId == null -> HubClaim.UNCLAIMED
+            HubIdentity.claimedByOtherShop(health, sess.shopId) -> HubClaim.OTHER_SHOP
+            else -> HubClaim.THIS_SHOP
+        }
+        _state.update { it.copy(claim = claim) }
+        if (claim == HubClaim.OTHER_SHOP && sess.hubRole == "owner" && _state.value.step.ordinal >= SetupStep.PAIR.ordinal) {
+            viewModelScope.launch {
+                HubIdentity.unpair(c, HubIdentityProblem.OTHER_SHOP)
+                goTo(SetupStep.PAIR)
+                _state.update { it.copy(pairError = PairError.OTHER_SHOP, needsOwnerPin = false, needsOwnerLogin = false, claim = null) }
+            }
+        }
+    }
+
     private suspend fun goTo(step: SetupStep) {
         c.session.update { it.copy(wizard = (it.wizard ?: WizardProgress(clock())).copy(step = step.ordinal)) }
         _state.update { it.copy(step = step, error = null, pairError = null, working = false) }
+        if (needsSession(step) && c.appState.staff.value == null) { _state.update { it.copy(needsOwnerLogin = true) }; return }
         if (step == SetupStep.STREAM) discover()
     }
 
@@ -139,7 +182,45 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
                 if (r.value.any { it.role == "owner" }) goTo(SetupStep.STREAM)
                 else _state.update { it.copy(working = false, needsOwnerPin = true) }
             }
-            else -> _state.update { it.copy(working = false, error = SetupError.HUB) }
+            else -> _state.update { it.copy(working = false, error = hubError(r)) }
+        }
+    }
+
+    private fun hubError(r: ApiResult<*>): SetupError =
+        if (r is ApiResult.HttpError && r.status == 423) SetupError.HUB_LOCKED else SetupError.HUB
+
+    /**
+     * `POST /staff/verify-pin` for the owner, keeping the `staff_session` in memory for the hub
+     * writes that follow. Returns null on success, else the error to show.
+     */
+    private suspend fun ownerLogin(pin: String): SetupError? = when (val r = c.hub.verifyPin(pin)) {
+        is ApiResult.Ok -> {
+            val v = r.value
+            if (v.role != "owner") SetupError.NOT_OWNER_PIN
+            else {
+                c.appState.login(StaffSession(v.staffId, v.name, v.role, Mode.OWNER, v.staffSession))
+                c.session.update { it.copy(lastMode = Mode.OWNER.name, ownerStaffId = v.staffId, ownerStaffName = v.name) }
+                null
+            }
+        }
+        is ApiResult.HttpError -> if (r.status == 401 || r.status == 429) SetupError.PIN_WRONG else hubError(r)
+        else -> SetupError.HUB
+    }
+
+    /** The hub already has an owner, or the staff session ended: the owner types their PIN. */
+    fun unlockWithOwnerPin() {
+        val s = _state.value
+        if (!Validation.isValidPin(s.pin)) { _state.update { it.copy(error = SetupError.PIN_INVALID) }; return }
+        _state.update { it.copy(working = true) }
+        viewModelScope.launch {
+            val e = ownerLogin(s.pin)
+            if (e != null) { _state.update { it.copy(working = false, error = e, pin = "") }; return@launch }
+            _state.update { it.copy(working = false, pin = "", needsOwnerLogin = false) }
+            when (_state.value.step) {
+                SetupStep.PAIR -> goTo(SetupStep.STREAM)
+                SetupStep.STREAM -> discover()
+                else -> Unit
+            }
         }
     }
 
@@ -154,12 +235,19 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
         if (e != null) { _state.update { it.copy(error = e) }; return }
         _state.update { it.copy(working = true) }
         viewModelScope.launch {
+            // The first owner is created before any staff session exists; the hub allows that only
+            // while it has no staff at all. Then the same PIN opens the session (contract 7.1).
             when (val r = c.hub.createStaff(StaffCreate(s.ownerName.trim(), "owner", s.pin))) {
                 is ApiResult.Ok -> {
                     c.session.update { it.copy(ownerStaffId = r.value.staffId, ownerStaffName = s.ownerName.trim()) }
-                    _state.update { it.copy(pin = "", pin2 = "", needsOwnerPin = false) }
-                    goTo(SetupStep.STREAM)
+                    val e = ownerLogin(s.pin)
+                    _state.update { it.copy(pin = "", pin2 = "", needsOwnerPin = false, needsOwnerLogin = e != null, error = e) }
+                    if (e == null) goTo(SetupStep.STREAM) else _state.update { it.copy(working = false) }
                 }
+                is ApiResult.HttpError -> if (r.status == 401 && r.error == HubClient.ERROR_STAFF_SESSION_REQUIRED) {
+                    // Someone created staff meanwhile: sign in with an existing owner PIN instead.
+                    _state.update { it.copy(working = false, pin = "", pin2 = "", needsOwnerPin = false, needsOwnerLogin = true) }
+                } else _state.update { it.copy(working = false, error = hubError(r)) }
                 else -> _state.update { it.copy(working = false, error = SetupError.HUB) }
             }
         }
@@ -171,7 +259,7 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
         viewModelScope.launch {
             when (val r = c.hub.discoverStreams()) {
                 is ApiResult.Ok -> _state.update { it.copy(working = false, streams = r.value.streams) }
-                else -> _state.update { it.copy(working = false, error = SetupError.HUB, streams = emptyList()) }
+                else -> _state.update { it.copy(working = false, error = hubError(r), streams = emptyList()) }
             }
         }
     }
@@ -182,12 +270,12 @@ class SetupViewModel(private val c: AppContainer, private val clock: () -> Long 
         val url = _state.value.chosenStream ?: return
         _state.update { it.copy(working = true) }
         viewModelScope.launch {
-            when (c.hub.saveGateStream(url)) {
+            when (val r = c.hub.saveGateStream(url)) {
                 is ApiResult.Ok -> {
                     c.session.update { it.copy(wizard = it.wizard?.copy(chosenStreamUrl = url)) }
                     goTo(SetupStep.AIM)
                 }
-                else -> _state.update { it.copy(working = false, error = SetupError.HUB) }
+                else -> _state.update { it.copy(working = false, error = hubError(r)) }
             }
         }
     }

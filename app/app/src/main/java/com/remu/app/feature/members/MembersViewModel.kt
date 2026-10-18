@@ -15,13 +15,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 
-enum class LoadError { HUB_UNREACHABLE, CERT_CHANGED, CLOUD_UNREACHABLE, OTHER }
+enum class LoadError { HUB_UNREACHABLE, CERT_CHANGED, CLOUD_UNREACHABLE, HUB_LOCKED, OTHER }
 
 fun <T> ApiResult<T>.loadError(): LoadError? = when (this) {
     is ApiResult.Ok -> null
     ApiResult.Unreachable, ApiResult.NotConfigured -> LoadError.HUB_UNREACHABLE
     ApiResult.CertificateChanged -> LoadError.CERT_CHANGED
-    is ApiResult.HttpError -> LoadError.OTHER
+    is ApiResult.HttpError -> if (status == 423) LoadError.HUB_LOCKED else LoadError.OTHER
 }
 
 /** Add-bill fields, shared by the member list and member detail. */

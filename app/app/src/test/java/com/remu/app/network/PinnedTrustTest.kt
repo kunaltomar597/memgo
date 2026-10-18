@@ -69,6 +69,16 @@ class PinnedTrustTest {
         assertEquals(PairOutcome.CertificateMismatch, hub.pair(base(), "K7QM-2XPA"))
     }
 
+    /** docs/API_CONTRACT.md 7.4: the counter phone refuses a hub other than the QR's `fp`, before sending the code. */
+    @Test fun inviteFingerprintStopsTheHandshakeWithAnotherHub() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"app_token":"t1","cert_sha256":"$pin","shop_id":"shop","role":"counter"}"""))
+        val hub = HubClient(OkHttpClient(), { null })
+        val expectedOther = CertFingerprint.sha256(otherCert.certificate)
+        assertEquals(PairOutcome.CertificateMismatch, hub.pair(base(), "483920", expectedFingerprint = expectedOther))
+        assertEquals("the invite code never reached the host", 0, server.requestCount)
+        assertTrue(hub.pair(base(), "483920", expectedFingerprint = pin) is PairOutcome.Paired)
+    }
+
     @Test fun wrongCodeAndRateLimit() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"unauthorized"}"""))
         server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"rate_limited"}"""))

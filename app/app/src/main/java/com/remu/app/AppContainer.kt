@@ -11,6 +11,7 @@ import com.remu.app.data.session.SessionStore
 import com.remu.app.data.state.AppState
 import com.remu.app.data.state.HubStatusMonitor
 import com.remu.app.data.state.InternetState
+import com.remu.app.data.state.Mode
 import com.remu.app.feature.enrol.CounterCameraFactory
 import com.remu.app.feature.export.ExportShare
 import com.remu.app.network.cloud.CloudClient
@@ -59,10 +60,16 @@ class AppContainer(
     val session = SessionRepository(sessionStore, scope)
     val appState = AppState()
 
-    val hub = HubClient(http, {
-        val s = session.current
-        s.hubBaseUrl?.let { HubConfig(it, s.hubToken, s.certSha256) }
-    })
+    val hub = HubClient(
+        http,
+        config = {
+            val s = session.current
+            s.hubBaseUrl?.let { HubConfig(it, s.hubToken, s.certSha256) }
+        },
+        staffSession = { appState.staff.value?.sessionToken },
+        ownerDataAllowed = { ownerDataAllowed() },
+        onAnswer = { path, status, error -> onHubAnswer(path, status, error) },
+    )
 
     val ownerAuth: OwnerAuth = ownerAuth ?: SupabaseOwnerAuth(http, supabaseUrl, supabaseAnonKey)
     val owner = OwnerSessionManager(this.ownerAuth, session)
@@ -70,12 +77,16 @@ class AppContainer(
 
     val hubStatus = HubStatusMonitor(hub, scope, hubOkIntervalMs, hubDownIntervalMs)
     val alerts = AlertStore()
-    val events = HubEventSocket(hub, scope, tokenProvider = { session.current.hubToken })
+    val events = HubEventSocket(hub, scope, tokenProvider = { session.current.hubToken }, onRejected = { code ->
+        if (code == 423) hubStatus.setLockedOut(true)
+    })
     val ingest = AlertIngest(alerts, hub, cloud, { hubStatus.status.value }, { session.current.shopId }, notifier)
     val fcm = FcmRegistrar(this)
 
     init {
         scope.launch { events.events.collect { ingest.onSocketEvent(it) } }
+        // Cashier mode never keeps /ws open, even on the owner's phone (docs/API_CONTRACT.md 7.2).
+        scope.launch { appState.staff.collect { if (it?.mode != Mode.OWNER) events.stop() } }
         // A new pairing or a cleared one changes what the monitor talks to: check at once.
         scope.launch {
             session.state.map { it.hubBaseUrl to it.hubToken }.distinctUntilChanged().collect { hubStatus.check() }
@@ -84,8 +95,20 @@ class AppContainer(
 
     /** Owner mode on the shop WiFi keeps the WebSocket open; anything else closes it. */
     fun startOwnerRealtime() {
-        events.start()
+        if (ownerDataAllowed()) events.start()
         fcm.registerIfReady()
+    }
+
+    /** Clips and `/ws` are for Owner mode on the owner-paired phone only (docs/API_CONTRACT.md 7.2). */
+    fun ownerDataAllowed(): Boolean = appState.staff.value?.mode == Mode.OWNER && session.current.hubRole == "owner"
+
+    /** Every hub reply: 423 locks hub actions, `staff_session_required` returns to the PIN screen. */
+    private fun onHubAnswer(path: String, status: Int, error: String?) {
+        when {
+            status == 423 -> hubStatus.setLockedOut(true)
+            path != "health" -> hubStatus.setLockedOut(false)
+        }
+        if (status == 401 && error == HubClient.ERROR_STAFF_SESSION_REQUIRED) appState.endSession()
     }
 
     fun stopOwnerRealtime() { events.stop() }

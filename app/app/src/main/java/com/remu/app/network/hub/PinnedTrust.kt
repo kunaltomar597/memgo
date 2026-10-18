@@ -49,12 +49,14 @@ class FingerprintTrustManager(private val expected: String) : X509TrustManager {
 }
 
 /**
- * Pairing only: the first contact with a hub, before any fingerprint is known. Records the leaf
+ * Pairing only: the first contact with a hub, before any fingerprint is stored. Records the leaf
  * the hub presented so the client can check it against `cert_sha256` in the `POST /pair` reply
- * and refuse the pairing on a mismatch. Never used for any other request.
+ * and refuse the pairing on a mismatch. When the invite QR carried `fp` ([expected]), a leaf
+ * with any other fingerprint fails the handshake, so the invite code never reaches that host
+ * (docs/API_CONTRACT.md 7.4). Never used for any other request.
  */
 @SuppressLint("CustomX509TrustManager") // Deliberate: first-contact capture, verified against cert_sha256.
-class FirstContactTrustManager : X509TrustManager {
+class FirstContactTrustManager(private val expected: String? = null) : X509TrustManager {
     @Volatile var presentedLeaf: X509Certificate? = null
         private set
 
@@ -64,7 +66,9 @@ class FirstContactTrustManager : X509TrustManager {
 
     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
         if (chain.isNullOrEmpty()) throw CertificateException("empty certificate chain")
-        presentedLeaf = chain[0]
+        val leaf = chain[0]
+        if (expected != null && !CertFingerprint.matches(leaf, expected)) throw PinMismatchException()
+        presentedLeaf = leaf
     }
 
     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()

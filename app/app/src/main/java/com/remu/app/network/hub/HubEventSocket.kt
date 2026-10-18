@@ -68,6 +68,8 @@ class HubEventSocket(
     private val backoff: Backoff = Backoff(),
     private val silenceTimeoutMs: Long = 45_000,
     private val tokenProvider: () -> String?,
+    /** The hub refused the upgrade with this HTTP status (403 for a counter token, 423 locked). */
+    private val onRejected: (Int) -> Unit = {},
 ) {
     private val _events = MutableSharedFlow<HubEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<HubEvent> = _events
@@ -84,13 +86,22 @@ class HubEventSocket(
 
     private var job: Job? = null
 
+    /**
+     * True after the hub answered 403: this token may not open /ws (docs/API_CONTRACT.md 7.2).
+     * The socket stops retrying until [start] is called again.
+     */
+    @Volatile var forbidden: Boolean = false
+        private set
+
     fun start() {
         if (job?.isActive == true) return
+        forbidden = false
         job = scope.launch {
             while (isActive) {
                 val token = tokenProvider()
                 if (token == null) { delay(backoff.next()); continue }
                 val closed = Channel<Unit>(Channel.CONFLATED)
+                var rejectedWith: Int? = null
                 val activity = Channel<Unit>(Channel.CONFLATED)
                 val socket = hub.openEvents(object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -119,7 +130,10 @@ class HubEventSocket(
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { closed.trySend(Unit) }
 
-                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { closed.trySend(Unit) }
+                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                        response?.code?.takeIf { it in 400..499 }?.let { rejectedWith = it }
+                        closed.trySend(Unit)
+                    }
                 })
                 if (socket == null) { delay(backoff.next()); continue }
                 connectionCount++
@@ -136,6 +150,10 @@ class HubEventSocket(
                 } finally {
                     socket.cancel()
                     _connected.value = false
+                }
+                rejectedWith?.let { code ->
+                    onRejected(code)
+                    if (code == 403) { forbidden = true; return@launch }
                 }
                 delay(backoff.next())
             }

@@ -164,7 +164,9 @@ class CashierEnrolTest {
         rule.onNodeWithTag("field_household_label").performScrollTo()
         rule.onNodeWithText("Sharma family").assertIsDisplayed()
         rule.onNodeWithTag("payer_1").performScrollTo().performClick()
-        rule.onNodeWithTag("field_adult_name_1").performScrollTo().performTextInput("Sunita Sharma")
+        // Adult 2 pays, so adult 1 gives their own name and phone (docs/API_CONTRACT.md 7.5).
+        rule.onNodeWithTag("field_adult_name_0").performScrollTo().performTextInput("Sunita Sharma")
+        rule.onNodeWithTag("field_adult_phone_0").performScrollTo().performTextInput("9123456780")
         rule.onNodeWithTag("make_member").performClick()
         rule.waitForTag("outcome_partial")
         rule.onNodeWithText("One face was refused (under 18). The others are members.").performScrollTo().assertIsDisplayed()
@@ -173,7 +175,9 @@ class CashierEnrolTest {
         assertEquals("Sharma family", b["household_label"]!!.jsonPrimitive.content)
         assertEquals(1, b["payer_index"]!!.jsonPrimitive.content.toInt())
         assertEquals(2, b["faces"]!!.jsonArray.size)
-        assertEquals("Sunita Sharma", b["faces"]!!.jsonArray[1].jsonObject["display_name"]!!.jsonPrimitive.content)
+        assertEquals("Sunita Sharma", b["faces"]!!.jsonArray[0].jsonObject["display_name"]!!.jsonPrimitive.content)
+        assertEquals("+919123456780", b["faces"]!!.jsonArray[0].jsonObject["phone"]!!.jsonPrimitive.content)
+        assertEquals("+919876543210", b["faces"]!!.jsonArray[1].jsonObject["phone"]!!.jsonPrimitive.content)
         assertEquals(listOf(2, 1), w.camera.captures.single())
     }
 

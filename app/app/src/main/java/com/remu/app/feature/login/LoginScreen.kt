@@ -75,6 +75,8 @@ fun LoginScreen(
                         LoginError.CERT_CHANGED -> stringResource(R.string.error_cert_changed)
                         LoginError.NEEDS_OWNER_PIN -> stringResource(R.string.login_owner_needs_owner_pin)
                         LoginError.NEEDS_OWNER_PHONE -> stringResource(R.string.login_owner_needs_owner_phone)
+                        LoginError.SESSION_ENDED -> stringResource(R.string.login_session_ended)
+                        LoginError.HUB_LOCKED -> stringResource(R.string.banner_hub_locked_support)
                         LoginError.OTHER -> stringResource(R.string.error_generic)
                     }
                     Box(Modifier.testTag("login_error")) { InlineError(text, null) }

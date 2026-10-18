@@ -36,6 +36,7 @@ import com.remu.app.core.theme.Remu
 import com.remu.app.core.theme.RemuType
 import com.remu.app.core.ui.EmptyState
 import com.remu.app.core.ui.HubChip
+import com.remu.app.core.ui.HubIdentityBanner
 import com.remu.app.core.ui.OwnerBanners
 import com.remu.app.core.ui.RemuCard
 import com.remu.app.core.ui.RemuText
@@ -66,6 +67,7 @@ fun OwnerHomeScreen(
                 }
             },
         )
+        HubIdentityBanner(s.identity)
         OwnerBanners(s.hub, s.phoneOnline)
         LazyColumn(
             Modifier.fillMaxSize().testTag("alert_list"),

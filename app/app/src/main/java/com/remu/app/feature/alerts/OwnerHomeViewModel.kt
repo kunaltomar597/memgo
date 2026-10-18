@@ -6,7 +6,9 @@ import com.remu.app.AppContainer
 import com.remu.app.data.alerts.AlertItem
 import com.remu.app.data.alerts.AlertStore
 import com.remu.app.data.alerts.Feedback
+import com.remu.app.data.state.HubIdentityProblem
 import com.remu.app.data.state.HubStatus
+import com.remu.app.feature.pairing.HubIdentity
 import com.remu.app.network.ApiResult
 import com.remu.app.network.cloud.CloudDevice
 import kotlinx.coroutines.delay
@@ -28,6 +30,7 @@ data class OwnerHomeUiState(
     val sending: Set<String> = emptySet(),
     val failed: String? = null,
     val now: Instant = Instant.now(),
+    val identity: HubIdentityProblem? = null,
 )
 
 /** Owner mode home (TASK-075, TASK-077 to TASK-079): today's cards, counts, hub status. */
@@ -42,6 +45,7 @@ class OwnerHomeViewModel(private val c: AppContainer, private val tickMs: Long =
         }
         viewModelScope.launch { c.hubStatus.status.collect { h -> _state.update { it.copy(hub = h) } } }
         viewModelScope.launch { c.internet.online.collect { o -> _state.update { it.copy(phoneOnline = o) } } }
+        viewModelScope.launch { c.appState.hubIdentity.collect { p -> _state.update { it.copy(identity = p) } } }
         viewModelScope.launch {
             while (isActive) {
                 _state.update { it.copy(now = Instant.now(), today = c.alerts.today()) }
@@ -56,7 +60,10 @@ class OwnerHomeViewModel(private val c: AppContainer, private val tickMs: Long =
         val shop = c.session.current.shopId ?: return
         viewModelScope.launch {
             when (val r = c.cloud.devices(shop)) {
-                is ApiResult.Ok -> _state.update { it.copy(device = r.value.firstOrNull(), deviceError = false) }
+                is ApiResult.Ok -> {
+                    HubIdentity.checkDevices(c, r.value)
+                    _state.update { it.copy(device = r.value.firstOrNull(), deviceError = false) }
+                }
                 else -> _state.update { it.copy(deviceError = true) }
             }
         }

@@ -8,9 +8,9 @@ Every software component of v0.1 is built and tested. 95 of 134 tasks are ticked
 
 | Component | State | Checks |
 |---|---|---|
-| hub (`hub/`, Python 3.11) | face pipeline, LAN API, consent chain, sync, jobs, unlock, discovery, preview, recovery | 130 tests, ruff, mypy strict |
-| cloud (`cloud/`, Next.js 15) | mirror, pairing, ingest, WhatsApp, FCM, exports, ops, metrics | 142 tests on PGlite, lint, typecheck, build |
-| app (`app/`, Kotlin, Compose) | Cashier mode and Owner mode | 128 JVM and Robolectric tests, lint; instrumented tests on an emulator |
+| hub (`hub/`, Python 3.11) | face pipeline, LAN API, consent chain, sync, jobs, unlock, discovery, preview, recovery | 155 tests, ruff, mypy strict |
+| cloud (`cloud/`, Next.js 15) | mirror, pairing, ingest, WhatsApp, FCM, exports, ops, metrics | 162 tests on PGlite, lint, typecheck, build |
+| app (`app/`, Kotlin, Compose) | Cashier mode and Owner mode | 180 JVM and Robolectric tests, lint; Cashier E2E passed on an emulator against a live hub |
 | full stack | `tests/integration/test_full_stack.py` | Postgres in Docker, real cloud, mock Graph API, syncing hub |
 
 Repository: https://github.com/kunaltomar597/memgo. Work is on branch `feature/p0-setup`, pull request #1. CI runs hub, cloud and app jobs.
@@ -34,11 +34,11 @@ Repository: https://github.com/kunaltomar597/memgo. Work is on branch `feature/p
 - The InsightFace model packs are licensed for non-commercial research only (TASK-123). No shop goes live before this closes.
 - The eval harness reports the `age_gap` subset as missing: no licence-clean age-gap set exists yet.
 - The cloud has no per-second rate limit on the WhatsApp webhook route (TASK-113 gap).
-- The security review (TASK-112) runs after this pass; its findings are listed under TASK-112.
+- The security review (TASK-112) is done: every high finding is fixed with a regression test; see docs/SECURITY.md section 13. Open: the pending-notice window and the plain-hashed cloud pairing codes.
 
 ## Current task
 
-TASK-112 security review fixes, then the field tasks.
+The field tasks: accounts, a Pi 5, a real DVR, the lawyer, then the pilot.
 
 ## Open questions for the founder
 

@@ -22,6 +22,8 @@ data class PairingUiState(
     val searching: Boolean = false,
     val scanning: Boolean = false,
     val done: Boolean = false,
+    /** The certificate fingerprint from a scanned invite QR; the hub must present exactly this one. */
+    val expectedFingerprint: String? = null,
 )
 
 /** The pairing screen (TASK-041): hub address (found by mDNS or typed) and the code or invite. */
@@ -51,7 +53,7 @@ class PairingViewModel(private val c: AppContainer, val kind: PairKind, discover
     /** A scanned invite QR fills both fields and pairs at once. */
     fun onScanned(text: String) {
         val link = PairLink.parse(text) ?: return
-        _state.update { it.copy(host = link.host, code = link.code, scanning = false) }
+        _state.update { it.copy(host = link.host, code = link.code, scanning = false, expectedFingerprint = link.fp) }
         pair()
     }
 
@@ -60,7 +62,7 @@ class PairingViewModel(private val c: AppContainer, val kind: PairKind, discover
         if (s.working) return
         _state.update { it.copy(working = true, error = null) }
         viewModelScope.launch {
-            val err = HubPairing.pair(c, s.host, s.code)
+            val err = HubPairing.pair(c, s.host, s.code, s.expectedFingerprint)
             _state.update { it.copy(working = false, error = err, done = err == null) }
         }
     }

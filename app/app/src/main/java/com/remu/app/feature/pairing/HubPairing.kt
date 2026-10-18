@@ -1,16 +1,23 @@
 package com.remu.app.feature.pairing
 
 import com.remu.app.AppContainer
+import com.remu.app.data.state.HubIdentityProblem
 import com.remu.app.network.hub.HubClient
 import com.remu.app.network.hub.PairOutcome
 
-enum class PairError { HOST_INVALID, CODE_EMPTY, WRONG_CODE, TOO_MANY, CERT_MISMATCH, UNREACHABLE, FAILED }
+enum class PairError { HOST_INVALID, CODE_EMPTY, WRONG_CODE, TOO_MANY, CERT_MISMATCH, UNREACHABLE, FAILED, NOT_YOUR_HUB, OTHER_SHOP }
 
-/** The invite QR shown in Owner mode: remu://pair?host=<address>&code=<invite code>. */
-data class PairLink(val host: String, val code: String) {
-    fun toUri(): String = "remu://pair?host=" + java.net.URLEncoder.encode(host, "UTF-8") + "&code=" + java.net.URLEncoder.encode(code, "UTF-8")
+/**
+ * The invite QR shown in Owner mode: remu://pair?host=<address>&code=<invite code>&fp=<fingerprint>.
+ * [fp] is the hub certificate fingerprint the owner phone pinned; the counter phone refuses a hub
+ * that presents any other certificate (docs/API_CONTRACT.md 7.4). Older codes have no `fp`.
+ */
+data class PairLink(val host: String, val code: String, val fp: String? = null) {
+    fun toUri(): String = "remu://pair?host=" + enc(host) + "&code=" + enc(code) + (fp?.let { "&fp=" + enc(it) } ?: "")
 
     companion object {
+        private fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
+
         fun parse(text: String): PairLink? {
             if (!text.startsWith("remu://pair?")) return null
             val params = text.removePrefix("remu://pair?").split("&").mapNotNull {
@@ -19,7 +26,7 @@ data class PairLink(val host: String, val code: String) {
             }.toMap()
             val host = params["host"]?.takeIf { it.isNotBlank() } ?: return null
             val code = params["code"]?.takeIf { it.isNotBlank() } ?: return null
-            return PairLink(host, code)
+            return PairLink(host, code, params["fp"]?.takeIf { it.isNotBlank() })
         }
     }
 }
@@ -27,12 +34,13 @@ data class PairLink(val host: String, val code: String) {
 /**
  * `POST /pair` and storing what it returns: the app token and the certificate fingerprint go
  * into the Keystore-encrypted DataStore; every later request pins that fingerprint (TASK-041).
+ * An owner pairing then checks the hub is the shop's (HubIdentity) and unpairs when it is not.
  */
 object HubPairing {
-    suspend fun pair(c: AppContainer, hostInput: String, code: String): PairError? {
+    suspend fun pair(c: AppContainer, hostInput: String, code: String, expectedFingerprint: String? = null): PairError? {
         val base = HubClient.baseUrlFor(hostInput) ?: return PairError.HOST_INVALID
         if (code.isBlank()) return PairError.CODE_EMPTY
-        return when (val r = c.hub.pair(base, code.trim().uppercase())) {
+        return when (val r = c.hub.pair(base, code.trim().uppercase(), expectedFingerprint)) {
             is PairOutcome.Paired -> {
                 c.session.update {
                     it.copy(
@@ -41,7 +49,12 @@ object HubPairing {
                     )
                 }
                 c.hubStatus.check()
-                null
+                val problem = if (r.response.role == "owner") HubIdentity.checkAfterOwnerPairing(c) else null
+                when (problem) {
+                    null -> { c.appState.setHubIdentity(null); null }
+                    HubIdentityProblem.NOT_YOUR_HUB -> PairError.NOT_YOUR_HUB
+                    HubIdentityProblem.OTHER_SHOP -> PairError.OTHER_SHOP
+                }
             }
             PairOutcome.WrongCode -> PairError.WRONG_CODE
             PairOutcome.TooManyTries -> PairError.TOO_MANY

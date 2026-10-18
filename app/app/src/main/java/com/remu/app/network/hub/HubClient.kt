@@ -47,11 +47,19 @@ sealed interface PairOutcome {
  * HubClient is the only class that talks to the hub (docs/RULES.md App rules): LAN HTTPS with
  * the certificate pinned at pairing, plus the WebSocket for events. Plain http is accepted only
  * for a development or test hub address that says http:// explicitly.
+ *
+ * [staffSession] is the in-memory `staff_session` from `POST /staff/verify-pin`; it goes in
+ * `X-Remu-Staff-Session` on every hub write route (docs/API_CONTRACT.md 7.1). [ownerDataAllowed]
+ * gates `/ws` and `/clips`, which only Owner mode may open (7.2). [onAnswer] hears the status and
+ * error code of every hub reply, so the app can react to `staff_session_required` and `locked`.
  */
 class HubClient(
     private val baseHttp: OkHttpClient,
     private val config: () -> HubConfig?,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val staffSession: () -> String? = { null },
+    private val ownerDataAllowed: () -> Boolean = { true },
+    private val onAnswer: (path: String, status: Int, error: String?) -> Unit = { _, _, _ -> },
 ) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
@@ -79,10 +87,15 @@ class HubClient(
 
     // ---- Pairing ---------------------------------------------------------------------------
 
-    /** POST /pair. On https the presented leaf must equal `cert_sha256` in the reply. */
-    suspend fun pair(baseUrl: String, code: String): PairOutcome = withContext(io) {
+    /**
+     * POST /pair. On https the presented leaf must equal `cert_sha256` in the reply, and, when the
+     * invite QR carried one, [expectedFingerprint] too; a different leaf stops the handshake before
+     * the code is sent.
+     */
+    suspend fun pair(baseUrl: String, code: String, expectedFingerprint: String? = null): PairOutcome = withContext(io) {
         val url = baseUrl.toHttpUrlOrNull()?.resolve("pair") ?: return@withContext PairOutcome.Failed
-        val trust = FirstContactTrustManager()
+        val expected = expectedFingerprint?.takeIf { it.isNotBlank() }
+        val trust = FirstContactTrustManager(expected)
         val client = if (url.isHttps) {
             val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), SecureRandom()) }
             baseHttp.newBuilder()
@@ -102,14 +115,16 @@ class HubClient(
                     else -> {
                         val parsed = RemuJson.decodeFromString(PairResponse.serializer(), resp.body?.string().orEmpty())
                         val leaf = trust.presentedLeaf
-                        if (url.isHttps && (leaf == null || !CertFingerprint.matches(leaf, parsed.certSha256))) {
-                            PairOutcome.CertificateMismatch
-                        } else PairOutcome.Paired(parsed)
+                        when {
+                            url.isHttps && (leaf == null || !CertFingerprint.matches(leaf, parsed.certSha256)) -> PairOutcome.CertificateMismatch
+                            expected != null && !fingerprintsEqual(expected, parsed.certSha256) -> PairOutcome.CertificateMismatch
+                            else -> PairOutcome.Paired(parsed)
+                        }
                     }
                 }
             }
         } catch (e: IOException) {
-            PairOutcome.Unreachable
+            if (expected != null && isPinFailure(e)) PairOutcome.CertificateMismatch else PairOutcome.Unreachable
         } catch (e: kotlinx.serialization.SerializationException) {
             PairOutcome.Failed
         }
@@ -121,20 +136,20 @@ class HubClient(
         call("GET", "health", null, HubHealth.serializer(), auth = false, timeoutMs = 5_000)
 
     suspend fun createInvite(): ApiResult<InviteResponse> =
-        call("POST", "pair/invite", "{}", InviteResponse.serializer())
+        call("POST", "pair/invite", "{}", InviteResponse.serializer(), staffWrite = true)
 
     suspend fun listStaff(): ApiResult<List<Staff>> =
         call("GET", "staff", null, ListSerializer(Staff.serializer()))
 
     suspend fun createStaff(req: StaffCreate): ApiResult<StaffCreated> =
-        call("POST", "staff", RemuJson.encodeToString(StaffCreate.serializer(), req), StaffCreated.serializer())
+        call("POST", "staff", RemuJson.encodeToString(StaffCreate.serializer(), req), StaffCreated.serializer(), staffWrite = true)
 
     suspend fun verifyPin(pin: String): ApiResult<VerifiedStaff> =
         call("POST", "staff/verify-pin", RemuJson.encodeToString(VerifyPinRequest.serializer(), VerifyPinRequest(pin)), VerifiedStaff.serializer())
 
     /** POST /enrol. The body holds face crops; it lives in memory only and is never cached. */
     suspend fun enrol(req: EnrolRequest): ApiResult<EnrolResponse> =
-        call("POST", "enrol", RemuJson.encodeToString(EnrolRequest.serializer(), req), EnrolResponse.serializer(), timeoutMs = ENROL_TIMEOUT_MS)
+        call("POST", "enrol", RemuJson.encodeToString(EnrolRequest.serializer(), req), EnrolResponse.serializer(), timeoutMs = ENROL_TIMEOUT_MS, staffWrite = true)
 
     suspend fun members(q: String? = null, phone: String? = null, status: String? = null): ApiResult<List<MemberSummary>> =
         call("GET", "members", null, ListSerializer(MemberSummary.serializer()),
@@ -144,38 +159,50 @@ class HubClient(
         call("GET", "members/$id", null, MemberCard.serializer())
 
     suspend fun patchMember(id: String, patch: MemberPatch): ApiResult<Unit> =
-        call("PATCH", "members/$id", RemuJson.encodeToString(MemberPatch.serializer(), patch), Unit.serializer())
+        call("PATCH", "members/$id", RemuJson.encodeToString(MemberPatch.serializer(), patch), Unit.serializer(), staffWrite = true)
 
     suspend fun removeMember(id: String, staffId: String): ApiResult<RemoveResponse> =
-        call("POST", "members/$id/remove", RemuJson.encodeToString(RemoveRequest.serializer(), RemoveRequest(staffId)), RemoveResponse.serializer())
+        call("POST", "members/$id/remove", RemuJson.encodeToString(RemoveRequest.serializer(), RemoveRequest(staffId)), RemoveResponse.serializer(), staffWrite = true)
 
     suspend fun addPurchase(memberId: String, req: PurchaseCreate): ApiResult<Purchase> =
-        call("POST", "members/$memberId/purchases", RemuJson.encodeToString(PurchaseCreate.serializer(), req), Purchase.serializer())
+        call("POST", "members/$memberId/purchases", RemuJson.encodeToString(PurchaseCreate.serializer(), req), Purchase.serializer(), staffWrite = true)
 
     suspend fun createHousehold(req: HouseholdCreate): ApiResult<IdResponse> =
-        call("POST", "households", RemuJson.encodeToString(HouseholdCreate.serializer(), req), IdResponse.serializer())
+        call("POST", "households", RemuJson.encodeToString(HouseholdCreate.serializer(), req), IdResponse.serializer(), staffWrite = true)
 
     suspend fun patchHousehold(id: String, patch: HouseholdPatch): ApiResult<Unit> =
-        call("PATCH", "households/$id", RemuJson.encodeToString(HouseholdPatch.serializer(), patch), Unit.serializer())
+        call("PATCH", "households/$id", RemuJson.encodeToString(HouseholdPatch.serializer(), patch), Unit.serializer(), staffWrite = true)
 
     suspend fun visits(memberId: String): ApiResult<List<Visit>> =
         call("GET", "visits", null, ListSerializer(Visit.serializer()), query = listOf("member_id" to memberId))
 
     suspend fun patchVisit(id: String, patch: VisitPatch): ApiResult<Unit> =
-        call("PATCH", "visits/$id", RemuJson.encodeToString(VisitPatch.serializer(), patch), Unit.serializer())
+        call("PATCH", "visits/$id", RemuJson.encodeToString(VisitPatch.serializer(), patch), Unit.serializer(), staffWrite = true)
 
-    /** GET /clips/{id}: the 5-second clip, held in memory for playback and never saved. */
+    /**
+     * GET /clips/{id}: the 5-second clip, held in memory for playback and never saved. Owner mode
+     * only (contract 7.2): anywhere else no request leaves the phone.
+     */
     suspend fun clip(id: String): ApiResult<ByteArray> = withContext(io) {
+        if (!ownerDataAllowed()) return@withContext ApiResult.NotConfigured
         val cfg = config() ?: return@withContext ApiResult.NotConfigured
         val url = urlFor(cfg, "clips/$id", emptyList()) ?: return@withContext ApiResult.NotConfigured
-        execute(cfg, request(cfg, "GET", url, null, auth = true), 20_000) { resp -> resp.body?.bytes() ?: ByteArray(0) }
+        execute(cfg, "clips", request(cfg, "GET", url, null, auth = true), 20_000) { resp -> resp.body?.bytes() ?: ByteArray(0) }
     }
+
+    /** GET /tokens (owner): every app token paired with this hub. */
+    suspend fun tokens(): ApiResult<List<HubToken>> =
+        call("GET", "tokens", null, ListSerializer(HubToken.serializer()))
+
+    /** POST /tokens/{id}/revoke (owner): the phone holding that token stops working at once. */
+    suspend fun revokeToken(id: String): ApiResult<Unit> =
+        call("POST", "tokens/$id/revoke", "{}", Unit.serializer())
 
     suspend fun discoverStreams(): ApiResult<DiscoverResponse> =
         call("GET", "discover", null, DiscoverResponse.serializer(), timeoutMs = 20_000)
 
     suspend fun saveGateStream(url: String): ApiResult<Unit> =
-        call("PUT", "settings/streams", RemuJson.encodeToString(StreamSettings.serializer(), StreamSettings(url)), Unit.serializer())
+        call("PUT", "settings/streams", RemuJson.encodeToString(StreamSettings.serializer(), StreamSettings(url)), Unit.serializer(), staffWrite = true)
 
     /**
      * GET /preview: the hub's low-resolution MJPEG aim preview. Emits one JPEG per frame, held in
@@ -186,7 +213,7 @@ class HubClient(
         val url = urlFor(cfg, "preview", emptyList()) ?: return@flow
         val client = clientFor(cfg).newBuilder().readTimeout(15, TimeUnit.SECONDS).callTimeout(0, TimeUnit.SECONDS).build()
         client.newCall(request(cfg, "GET", url, null, auth = true)).execute().use { resp ->
-            if (!resp.isSuccessful) return@use
+            if (!resp.isSuccessful) { onAnswer("preview", resp.code, errorCode(resp.body?.string())); return@use }
             val input = resp.body?.byteStream() ?: return@use
             val reader = MjpegReader(input)
             while (true) {
@@ -196,8 +223,9 @@ class HubClient(
         }
     }.flowOn(io)
 
-    /** Opens /ws. The token goes in the first message, never in the URL. */
+    /** Opens /ws, in Owner mode only (contract 7.2). The token goes in the first message, never in the URL. */
     fun openEvents(listener: WebSocketListener): WebSocket? {
+        if (!ownerDataAllowed()) return null
         val cfg = config() ?: return null
         cfg.token ?: return null
         val base = cfg.baseUrl.toHttpUrlOrNull() ?: return null
@@ -216,11 +244,12 @@ class HubClient(
         auth: Boolean = true,
         query: List<Pair<String, String>> = emptyList(),
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        staffWrite: Boolean = false,
     ): ApiResult<T> = withContext(io) {
         val cfg = config() ?: return@withContext ApiResult.NotConfigured
         if (auth && cfg.token == null) return@withContext ApiResult.NotConfigured
         val url = urlFor(cfg, path, query) ?: return@withContext ApiResult.NotConfigured
-        execute(cfg, request(cfg, method, url, body, auth), timeoutMs) { resp ->
+        execute(cfg, path, request(cfg, method, url, body, auth, staffWrite), timeoutMs) { resp ->
             val text = resp.body?.string().orEmpty()
             @Suppress("UNCHECKED_CAST")
             if (deserializer == Unit.serializer()) Unit as T else RemuJson.decodeFromString(deserializer, text)
@@ -234,9 +263,11 @@ class HubClient(
         return b.build()
     }
 
-    private fun request(cfg: HubConfig, method: String, url: HttpUrl, body: String?, auth: Boolean): Request {
+    private fun request(cfg: HubConfig, method: String, url: HttpUrl, body: String?, auth: Boolean, staffWrite: Boolean = false): Request {
         val b = Request.Builder().url(url).header("Accept", "application/json")
         if (auth) cfg.token?.let { b.header("Authorization", "Bearer $it") }
+        // The first owner's POST /staff has no session yet; the hub allows it only while it has no staff.
+        if (staffWrite) staffSession()?.let { b.header(STAFF_SESSION_HEADER, it) }
         val rb = body?.toRequestBody(jsonType)
         when (method) {
             "GET" -> b.get()
@@ -248,16 +279,21 @@ class HubClient(
         return b.build()
     }
 
-    private fun <T> execute(cfg: HubConfig, request: Request, timeoutMs: Long, parse: (Response) -> T): ApiResult<T> {
+    private fun <T> execute(cfg: HubConfig, path: String, request: Request, timeoutMs: Long, parse: (Response) -> T): ApiResult<T> {
         return try {
             val client = clientFor(cfg)
             val call = client.newCall(request)
             call.timeout().timeout(timeoutMs, TimeUnit.MILLISECONDS)
             call.execute().use { resp ->
-                if (resp.isSuccessful) ApiResult.Ok(parse(resp))
-                else {
+                if (resp.isSuccessful) {
+                    val value = parse(resp)
+                    onAnswer(path, resp.code, null)
+                    ApiResult.Ok(value)
+                } else {
                     val text = resp.body?.string()
-                    ApiResult.HttpError(resp.code, errorCode(text), text)
+                    val code = errorCode(text)
+                    onAnswer(path, resp.code, code)
+                    ApiResult.HttpError(resp.code, code, text)
                 }
             }
         } catch (e: PinMismatchException) {
@@ -280,6 +316,12 @@ class HubClient(
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
+        const val STAFF_SESSION_HEADER = "X-Remu-Staff-Session"
+        const val ERROR_STAFF_SESSION_REQUIRED = "staff_session_required"
+        const val ERROR_LOCKED = "locked"
+
+        fun fingerprintsEqual(a: String, b: String): Boolean =
+            java.security.MessageDigest.isEqual(CertFingerprint.normalise(a).toByteArray(), CertFingerprint.normalise(b).toByteArray())
         /** Make member waits at most this long; the camera stays live meanwhile (docs/DESIGN.md section 9). */
         const val ENROL_TIMEOUT_MS = 8_000L
 
