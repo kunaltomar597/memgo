@@ -1,0 +1,10 @@
+# Types a 4 to 6 digit PIN on the login PIN pad. Env: PIN.
+appId: com.remu.app
+---
+- evalScript: ${output.pin = PIN.split('')}
+- repeat:
+    times: ${output.pin.length}
+    commands:
+      - evalScript: ${output.digit = output.pin.shift()}
+      - tapOn:
+          id: "pin_key_${output.digit}"

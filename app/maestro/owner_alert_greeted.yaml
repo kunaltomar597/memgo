@@ -1,0 +1,80 @@
+# TASK-084: Owner mode end to end. Sign in, receive a synthetic alert over the WebSocket from a
+# local hub, open the card, tap Greeted, and check greeted=true on the hub's visits row.
+# Run:  maestro test app/maestro/owner_alert_greeted.yaml \
+#         -e HUB_HOST=10.0.2.2:8443 -e PAIRING_CODE=K7QM-2XPA -e OWNER_PIN=482199 \
+#         -e OWNER_EMAIL=owner@example.com -e OWNER_PASSWORD=... \
+#         -e HUB_URL=https://10.0.2.2:8443 -e HUB_TOKEN=<owner app token> -e MEMBER_ID=m_...
+# Before: the hub is paired to a test shop in a local cloud (REMU_CLOUD_URL, SUPABASE_URL and
+# SUPABASE_ANON_KEY baked into the debug build), an owner PIN exists, and an active member with
+# MEMBER_ID can be matched. The synthetic alert comes from the hub's fake camera (make
+# fake-camera) showing that member, or from a hub dev command that emits an `alert` event.
+# Docs: docs/TEST_PLAN.md section 16.
+appId: com.remu.app
+---
+- launchApp:
+    clearState: true
+    permissions:
+      notifications: allow
+- tapOn:
+    id: "welcome_pair_owner"
+- tapOn:
+    id: "pair_host"
+- inputText: ${HUB_HOST}
+- tapOn:
+    id: "pair_code"
+- inputText: ${PAIRING_CODE}
+- hideKeyboard
+- tapOn:
+    id: "pair_submit"
+- extendedWaitUntil:
+    visible:
+      id: "pin_unlock"
+    timeout: 15000
+- tapOn:
+    id: "mode_owner"
+- runFlow:
+    file: subflows/type_pin.yaml
+    env:
+      PIN: ${OWNER_PIN}
+- tapOn:
+    id: "pin_unlock"
+- extendedWaitUntil:
+    visible:
+      id: "signin_email"
+    timeout: 15000
+- tapOn:
+    id: "signin_email"
+- inputText: ${OWNER_EMAIL}
+- tapOn:
+    id: "signin_password"
+- inputText: ${OWNER_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: "signin_submit"
+- extendedWaitUntil:
+    visible:
+      id: "alerts_summary"
+    timeout: 20000
+# Wait for the synthetic alert to arrive over the LAN WebSocket.
+- extendedWaitUntil:
+    visible:
+      id: "greeted_v_.*"
+    timeout: 60000
+- tapOn:
+    id: "alert_v_.*"
+- extendedWaitUntil:
+    visible:
+      id: "greeted_v_.*"
+    timeout: 10000
+- tapOn:
+    id: "greeted_v_.*"
+- extendedWaitUntil:
+    visible:
+      id: "chip_greeted"
+    timeout: 10000
+- runScript:
+    file: scripts/assert_greeted.js
+    env:
+      HUB_URL: ${HUB_URL}
+      HUB_TOKEN: ${HUB_TOKEN}
+      MEMBER_ID: ${MEMBER_ID}

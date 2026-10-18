@@ -1,0 +1,74 @@
+# TASK-053: Cashier mode end to end on a device or emulator against a local hub.
+# Run:  maestro test app/maestro/cashier_enrol.yaml \
+#         -e HUB_HOST=10.0.2.2:8443 -e INVITE_CODE=483920 -e STAFF_PIN=4821 \
+#         -e HUB_URL=https://10.0.2.2:8443 -e HUB_TOKEN=<an owner app token for the check> -e PHONE=9812345678
+# Before: the hub runs with the fake camera or a real one, an invite code comes from Owner mode
+# (or POST /pair/invite), the cashier PIN exists (remu-hub staff add), and the phone's camera
+# sees a test face (emulator: put the test image in the virtual scene; device: hold up a printout).
+# Docs: docs/TEST_PLAN.md section 16.
+appId: com.remu.app
+---
+- launchApp:
+    clearState: true
+    permissions:
+      camera: allow
+      notifications: allow
+- tapOn:
+    id: "welcome_counter"
+- tapOn:
+    id: "pair_host"
+- inputText: ${HUB_HOST}
+- tapOn:
+    id: "pair_code"
+- inputText: ${INVITE_CODE}
+- hideKeyboard
+- tapOn:
+    id: "pair_submit"
+- extendedWaitUntil:
+    visible:
+      id: "pin_unlock"
+    timeout: 15000
+- tapOn:
+    id: "mode_cashier"
+- runFlow:
+    file: subflows/type_pin.yaml
+    env:
+      PIN: ${STAFF_PIN}
+- tapOn:
+    id: "pin_unlock"
+- extendedWaitUntil:
+    visible:
+      id: "make_member"
+    timeout: 15000
+# The largest face is pre-selected once ML Kit sees it.
+- extendedWaitUntil:
+    visible:
+      id: "face_.*"
+    timeout: 20000
+- tapOn:
+    id: "field_name"
+- inputText: "Maestro Test"
+- tapOn:
+    id: "field_phone"
+- inputText: ${PHONE}
+- tapOn:
+    id: "field_bill_no"
+- inputText: "MAESTRO-1"
+- tapOn:
+    id: "field_amount"
+- inputText: "100"
+- hideKeyboard
+- assertVisible: "आप अब हमारे मेंबर हो गए। अगली बार आते ही हम आपको पहचान के वेलकम करेंगे, और 5% ऑफ मिलेगा।"
+- tapOn:
+    id: "make_member"
+- extendedWaitUntil:
+    visible: "Member added. Notice pending on WhatsApp."
+    timeout: 15000
+- assertVisible: "Notice pending"
+# The hub now has one pending_notice member for this phone.
+- runScript:
+    file: scripts/assert_pending_member.js
+    env:
+      HUB_URL: ${HUB_URL}
+      HUB_TOKEN: ${HUB_TOKEN}
+      PHONE: ${PHONE}

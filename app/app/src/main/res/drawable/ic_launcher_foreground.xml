@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder mark until a wordmark exists (OPEN in docs/DESIGN.md section 12). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFBF7F2"
+        android:pathData="M54,30a24,24 0,1 1,0 48a24,24 0,1 1,0 -48zM54,40a14,14 0,1 0,0 28a14,14 0,1 0,0 -28z" />
+    <path
+        android:fillColor="#FFE8A317"
+        android:pathData="M54,48a6,6 0,1 1,0 12a6,6 0,1 1,0 -12z" />
+</vector>
