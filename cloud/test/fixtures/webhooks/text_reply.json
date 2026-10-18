@@ -1,0 +1,28 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "200000000000002",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": { "display_phone_number": "919800000099", "phone_number_id": "100000000000001" },
+            "contacts": [{ "profile": { "name": "Test Member" }, "wa_id": "{{from}}" }],
+            "messages": [
+              {
+                "context": { "from": "919800000099", "id": "{{context_wamid}}" },
+                "from": "{{from}}",
+                "id": "{{msg_id}}",
+                "timestamp": "{{ts}}",
+                "type": "text",
+                "text": { "body": "{{body}}" }
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}

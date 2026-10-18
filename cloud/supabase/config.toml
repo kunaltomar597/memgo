@@ -1,0 +1,43 @@
+# Supabase CLI configuration for the Remu cloud.
+# The hosted project lives in Mumbai (AWS ap-south-1); the region is chosen when the
+# project is created in the dashboard or with `supabase projects create --region ap-south-1`.
+project_id = "remu-cloud"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+
+[auth.sms]
+# OPEN: owner sign-in method for the pilot (phone OTP needs DLT registration in India).
+enable_signup = false

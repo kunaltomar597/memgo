@@ -193,3 +193,28 @@ def test_ulids_are_monotonic() -> None:
     ids = [ulid() for _ in range(2000)]
     assert ids == sorted(ids) and len(set(ids)) == 2000
     assert new_id("m").startswith("m_") and len(new_id("m")) == 28
+
+
+def test_cloud_consent_vector_matches_hub_hashing() -> None:
+    """The cloud's TypeScript test vector must hash identically on the hub."""
+    import json
+    from pathlib import Path
+
+    from remu_hub.db.consent import canonical
+    from remu_hub.phone import phone_hash
+
+    path = (
+        Path(__file__).resolve().parents[2] / "cloud" / "test" / "fixtures" / "consent_vector.json"
+    )
+    if not path.exists():
+        pytest.skip("cloud vector not present")
+    v = json.loads(path.read_text())
+    prev = "sha256:genesis"
+    for item in v["vectors"]:
+        rec = item["record"]
+        assert rec["prev_hash"] == prev
+        assert canonical({k: x for k, x in rec.items() if k != "record_hash"}) == item["canonical"]
+        assert compute_hash(rec) == item["expected_record_hash"]
+        prev = item["expected_record_hash"]
+    assert prev == v["expected_chain_head"]
+    assert phone_hash(v["phone_hash_vector"]["e164"]) == v["phone_hash_vector"]["phone_hash"]

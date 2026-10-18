@@ -1,0 +1,70 @@
+{
+  "description": "Consent record hash vectors (docs/API_CONTRACT.md section 3). record_hash = 'sha256:' + hex(sha256(canonical(record without record_hash))). canonical = keys sorted at every level, separators ',' and ':', non-ASCII kept as UTF-8. Python: json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=False). Expected values were computed with Node.js crypto and cross-checked with Python 3. The second record links to the first and carries Devanagari in bill_no to exercise UTF-8 handling.",
+  "phone_hash_vector": {
+    "e164": "+919876543210",
+    "phone_hash": "f3a47ce5ce3d4ca8ad15225a245b2759022f79489f5c62719b8c9490f7aab90e"
+  },
+  "vectors": [
+    {
+      "record": {
+        "id": "c_01JAB3C4D5E6F7G8H9J0K1M2N3",
+        "shop_id": "sharma-jewellers-jaipur",
+        "member_id": "m_01JAB3C4D5E6F7G8H9J0K1M2N4",
+        "bill_no": "INV-2026-10-18-0417",
+        "ts": "2026-10-18T17:42:11+05:30",
+        "cashier_id": "s_01JAB3C4D5E6F7G8H9J0K1M2N5",
+        "channel": "verbal_at_counter",
+        "script_version": "hi-IN-v1.0",
+        "notice_version": "wa-v1.0",
+        "purposes_json": {
+          "recognise_at_entry": true,
+          "whatsapp_offers": true
+        },
+        "notice_delivery_json": {
+          "printed_on_bill": false,
+          "whatsapp_msg_id": null,
+          "whatsapp_status": null,
+          "delivered_at": null,
+          "thumbs_up_at": null
+        },
+        "adult_check": "passed",
+        "withdrawn_at": null,
+        "template_deleted_at": null,
+        "prev_hash": "sha256:genesis"
+      },
+      "canonical": "{\"adult_check\":\"passed\",\"bill_no\":\"INV-2026-10-18-0417\",\"cashier_id\":\"s_01JAB3C4D5E6F7G8H9J0K1M2N5\",\"channel\":\"verbal_at_counter\",\"id\":\"c_01JAB3C4D5E6F7G8H9J0K1M2N3\",\"member_id\":\"m_01JAB3C4D5E6F7G8H9J0K1M2N4\",\"notice_delivery_json\":{\"delivered_at\":null,\"printed_on_bill\":false,\"thumbs_up_at\":null,\"whatsapp_msg_id\":null,\"whatsapp_status\":null},\"notice_version\":\"wa-v1.0\",\"prev_hash\":\"sha256:genesis\",\"purposes_json\":{\"recognise_at_entry\":true,\"whatsapp_offers\":true},\"script_version\":\"hi-IN-v1.0\",\"shop_id\":\"sharma-jewellers-jaipur\",\"template_deleted_at\":null,\"ts\":\"2026-10-18T17:42:11+05:30\",\"withdrawn_at\":null}",
+      "expected_record_hash": "sha256:7923c819ed1284a0ee0b1e139651718bd7f5349d4d0448dd4512a4aba54413fc"
+    },
+    {
+      "record": {
+        "id": "c_01JAB3C4D5E6F7G8H9J0K1M2P0",
+        "shop_id": "sharma-jewellers-jaipur",
+        "member_id": "m_01JAB3C4D5E6F7G8H9J0K1M2N4",
+        "bill_no": "बिल-0417",
+        "ts": "2026-10-18T17:42:41+05:30",
+        "cashier_id": null,
+        "channel": "whatsapp_webhook",
+        "script_version": "hi-IN-v1.0",
+        "notice_version": "wa-v1.0",
+        "purposes_json": {
+          "recognise_at_entry": true,
+          "whatsapp_offers": true
+        },
+        "notice_delivery_json": {
+          "printed_on_bill": false,
+          "whatsapp_msg_id": "wamid.HBgMOTE5ODc2NTQzMjEwFQIAERgSQUJDREVGMDEyMzQ1Njc4OQA=",
+          "whatsapp_status": "delivered",
+          "delivered_at": "2026-10-18T17:42:40+05:30",
+          "thumbs_up_at": null
+        },
+        "adult_check": "passed",
+        "withdrawn_at": null,
+        "template_deleted_at": null,
+        "prev_hash": "sha256:7923c819ed1284a0ee0b1e139651718bd7f5349d4d0448dd4512a4aba54413fc"
+      },
+      "canonical": "{\"adult_check\":\"passed\",\"bill_no\":\"बिल-0417\",\"cashier_id\":null,\"channel\":\"whatsapp_webhook\",\"id\":\"c_01JAB3C4D5E6F7G8H9J0K1M2P0\",\"member_id\":\"m_01JAB3C4D5E6F7G8H9J0K1M2N4\",\"notice_delivery_json\":{\"delivered_at\":\"2026-10-18T17:42:40+05:30\",\"printed_on_bill\":false,\"thumbs_up_at\":null,\"whatsapp_msg_id\":\"wamid.HBgMOTE5ODc2NTQzMjEwFQIAERgSQUJDREVGMDEyMzQ1Njc4OQA=\",\"whatsapp_status\":\"delivered\"},\"notice_version\":\"wa-v1.0\",\"prev_hash\":\"sha256:7923c819ed1284a0ee0b1e139651718bd7f5349d4d0448dd4512a4aba54413fc\",\"purposes_json\":{\"recognise_at_entry\":true,\"whatsapp_offers\":true},\"script_version\":\"hi-IN-v1.0\",\"shop_id\":\"sharma-jewellers-jaipur\",\"template_deleted_at\":null,\"ts\":\"2026-10-18T17:42:41+05:30\",\"withdrawn_at\":null}",
+      "expected_record_hash": "sha256:ccd16d1fde41d621a78e2c7e490ad81bdc7d0adaab896b218458fccd35d9d0db"
+    }
+  ],
+  "expected_chain_head": "sha256:ccd16d1fde41d621a78e2c7e490ad81bdc7d0adaab896b218458fccd35d9d0db"
+}

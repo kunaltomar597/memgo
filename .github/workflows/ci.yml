@@ -42,3 +42,22 @@ jobs:
       - name: Privacy scan
         if: hashFiles('scripts/privacy_scan.py') != ''
         run: uv run python ../scripts/privacy_scan.py --self-test
+
+  cloud:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
