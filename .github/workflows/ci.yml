@@ -74,6 +74,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew --no-daemon lint test assembleDebug
+      - name: Build, unit tests and lint (preinstalled runner SDK)
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew --no-daemon lint test assembleDebug
