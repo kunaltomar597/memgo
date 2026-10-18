@@ -141,7 +141,16 @@ export function route<P = Record<string, never>>(name: string, handler: Handler<
         log.error("config_missing", { route: name });
         return json({ error: "internal", detail: "server not configured" }, 500);
       }
-      log.error("unhandled", { route: name, duration_ms: Date.now() - started });
+      // Error class and Postgres SQLSTATE only: never the message, which can carry row values.
+      const err = e as { name?: unknown; code?: unknown; constraint_name?: unknown; routine?: unknown };
+      log.error("unhandled", {
+        route: name,
+        duration_ms: Date.now() - started,
+        error_class: typeof err?.name === "string" ? err.name : "unknown",
+        sqlstate: typeof err?.code === "string" ? err.code : undefined,
+        constraint: typeof err?.constraint_name === "string" ? err.constraint_name : undefined,
+        routine: typeof err?.routine === "string" ? err.routine : undefined,
+      });
       const { reportError } = await import("./sentry");
       reportError(e);
       return json({ error: "internal", detail: "internal error" }, 500);

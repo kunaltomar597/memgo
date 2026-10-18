@@ -15,6 +15,7 @@ export interface Env {
   whatsappTemplateEn?: string;
   whatsappTemplateHi?: string;
   whatsappGraphVersion: string;
+  whatsappGraphBaseUrl: string;
   fcmServiceAccountJsonBase64?: string;
   hubPairingSecret?: string;
   consentExportSigningKey?: string;
@@ -42,6 +43,8 @@ export function readEnv(): Env {
     whatsappTemplateEn: val("WHATSAPP_TEMPLATE_MEMBER_NOTICE_EN"),
     whatsappTemplateHi: val("WHATSAPP_TEMPLATE_MEMBER_NOTICE_HI"),
     whatsappGraphVersion: val("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0",
+    // Test-only override for local end-to-end runs against a mock Graph API; default is Meta.
+    whatsappGraphBaseUrl: val("WHATSAPP_GRAPH_BASE_URL") ?? "https://graph.facebook.com",
     fcmServiceAccountJsonBase64: val("FCM_SERVICE_ACCOUNT_JSON_BASE64"),
     hubPairingSecret: val("HUB_PAIRING_SECRET"),
     consentExportSigningKey: val("CONSENT_EXPORT_SIGNING_KEY"),

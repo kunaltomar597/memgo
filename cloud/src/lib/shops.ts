@@ -43,7 +43,7 @@ export async function createShop(
     for (let attempt = 0; attempt < 5; attempt++) {
       const rows = await tx.query<{ id: string }>(
         `insert into shops (id, name, city, script_version, notice_version, settings_json, created_by)
-         values ($1, $2, $3, $4, $5, $6::jsonb, $7::uuid) on conflict (id) do nothing returning id`,
+         values ($1, $2, $3, $4, $5, $6::text::jsonb, $7::uuid) on conflict (id) do nothing returning id`,
         [id, args.name, args.city, SCRIPT_VERSION, NOTICE_VERSION, JSON.stringify({ notice_language: args.noticeLanguage }), args.userId],
       );
       if (rows.length === 1) {

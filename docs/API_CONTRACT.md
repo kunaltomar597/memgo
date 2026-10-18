@@ -95,9 +95,17 @@ Response 201:
 
 ### Visits and clips
 
-- `GET /visits?member_id=` returns `[{"id", "member_id", "ts", "camera", "score", "frames_agreed", "greeted", "greeted_by", "not_them", "has_clip"}]`, newest first.
+- `GET /visits?member_id=` returns `[{"id", "member_id", "ts", "camera", "score", "frames_agreed", "greeted", "greeted_by", "not_them", "has_clip", "clip_id"}]`, newest first. `clip_id` is null when there is no clip.
 - `PATCH /visits/{id}` `{"greeted"?, "greeted_by"?, "not_them"?}`.
 - `GET /clips/{id}` streams `video/mp4`, LAN only.
+
+### Setup routes (owner token)
+
+- `POST /discover` `{"user", "password", "subnet"?}` scans the LAN for DVR streams with that login and keeps the login on the hub for `GET /discover`. The password never travels in a URL.
+- `GET /discover` repeats the scan with the saved login (or `REMU_DVR_USER` and `REMU_DVR_PASSWORD`).
+- Both return `{"streams": [{"id", "label", "url", "host", "brand", "channel", "substream", "width", "height", "thumbnail_jpeg_b64"}]}`. Sub-streams come first. `url` carries the DVR login and is shown only to the owner.
+- `PUT /settings/streams` `{"gate_url": "rtsp://..."}` saves the gate stream; the hub uses it after a restart.
+- `GET /preview` streams `multipart/x-mixed-replace` MJPEG with face boxes, LAN only, and stops after 10 minutes. Nothing is stored.
 
 ### GET /consent/export
 
@@ -183,7 +191,8 @@ Supabase Auth session in `Authorization: Bearer <supabase access token>`.
 - `GET /api/visits/{id}/card` returns the `alert` payload of section 1.
 - `POST /api/visits/{id}/feedback` `{"greeted"?, "greeted_by"?, "not_them"?}` returns 204.
 - `POST /api/members/{id}/withdraw` returns 202.
-- `POST /api/shops/{id}/consent-export?format=csv|pdf` returns the file with header `X-Remu-Signature: <base64 Ed25519 signature>`.
+- `POST /api/shops/{id}/consent-export?format=csv|pdf` returns the file with headers `X-Remu-Signature` (base64 Ed25519 over the bytes), `X-Remu-Public-Key`, `X-Remu-Sha256`, `X-Remu-Chain-Head` and `X-Remu-Chain-Verified`. The CSV ends with `# key: value` lines for the chain head and the latest anchor.
+- `POST /api/devices/{id}/revoke` (owner) returns 204, bumps the unlock generation and queues `device_revoked`.
 
 FCM data message: `{"shop_id", "visit_id", "member_id"}` and nothing else.
 
@@ -194,3 +203,13 @@ FCM data message: `{"shop_id", "visit_id", "member_id"}` and nothing else.
 - `POST /api/ops/devices` `{"pairing_code", "serial"}` registers a provisioned hub, returns 201 `{"device_id"}`.
 - `GET /api/ops/hubs` returns every device with status.
 - `GET /api/ops/metrics?from=&to=` returns pilot metrics as JSON, or CSV with `Accept: text/csv`.
+- `POST /api/ops/jobs/hub-monitor` and `POST /api/ops/jobs/pilot-metrics` are the pg_cron targets.
+
+## 6. Behaviour settled during the build
+
+- Owner shops are read by the app from Supabase (`rest/v1/shops`, scoped by Row Level Security); there is no cloud route that lists them.
+- A `400 payload_forbidden` from `POST /api/hub/events` rejects the whole batch. The hub's own allowlist makes this unreachable in practice.
+- `notice_status` arrives for `sent`, `read` and `failed` too. Only `delivered` activates; the hub records `delivered` and `failed` in the chain and ignores the rest.
+- A claim after the device token was issued returns 409; a lost token means re-provisioning.
+- An empty chain anchors as `sha256:genesis`.
+- The invite QR code encodes `remu://pair?host=<hub address>&code=<invite code>`.

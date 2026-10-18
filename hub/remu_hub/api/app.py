@@ -382,26 +382,47 @@ def create_app(hub: Hub, cert_path: Path | None = None) -> FastAPI:
 
         return PlainTextResponse(consent_csv(hub.db), media_type="text/csv")
 
-    @app.post("/discover")
-    def discover_streams(body: DiscoverIn, _: Owner) -> list[dict[str, Any]]:
+    def run_discovery(user: str, password: str, subnet: str | None) -> dict[str, Any]:
         import base64
 
-        from remu_hub.video.discover import discover, local_subnet
+        from remu_hub.video import discover as disc
 
-        found = discover(body.subnet or local_subnet(), body.user, body.password)
-        return [
-            {
-                "host": c.host,
-                "brand": c.brand,
-                "channel": c.channel,
-                "url": c.url,
-                "substream": c.substream,
-                "width": c.width,
-                "height": c.height,
-                "thumbnail_jpeg_b64": base64.b64encode(c.thumbnail_jpeg).decode(),
-            }
-            for c in found
-        ]
+        found = disc.discover(subnet or disc.local_subnet(), user, password)
+        streams = []
+        for c in found:
+            kind = "sub" if c.substream else "main"
+            label = f"{c.brand} {c.host} channel {c.channel} ({c.width}x{c.height}, {kind})"
+            streams.append(
+                {
+                    "id": f"{c.host}/{c.brand}/{c.channel}/{kind}",
+                    "label": label,
+                    "url": c.url,
+                    "host": c.host,
+                    "brand": c.brand,
+                    "channel": c.channel,
+                    "substream": c.substream,
+                    "width": c.width,
+                    "height": c.height,
+                    "thumbnail_jpeg_b64": base64.b64encode(c.thumbnail_jpeg).decode(),
+                }
+            )
+        return {"streams": streams}
+
+    @app.get("/discover")
+    def discover_saved(_: Owner) -> dict[str, Any]:
+        """Uses the DVR login saved by POST /discover, or REMU_DVR_USER and REMU_DVR_PASSWORD."""
+        import os
+
+        user = hub.db.get_kv("dvr_user") or os.environ.get("REMU_DVR_USER") or "admin"
+        password = hub.db.get_kv("dvr_password") or os.environ.get("REMU_DVR_PASSWORD") or ""
+        return run_discovery(user, password, None)
+
+    @app.post("/discover")
+    def discover_streams(body: DiscoverIn, _: Owner) -> dict[str, Any]:
+        """Runs discovery with the DVR login in the body and keeps it for GET /discover."""
+        hub.db.set_kv("dvr_user", body.user)
+        hub.db.set_kv("dvr_password", body.password)
+        return run_discovery(body.user, body.password, body.subnet)
 
     @app.put("/settings/streams")
     def save_streams(body: StreamsIn, _: Owner) -> dict[str, str]:

@@ -23,6 +23,8 @@ export interface WhatsAppConfig {
   templateEn?: string;
   templateHi?: string;
   graphVersion: string;
+  /** Defaults to https://graph.facebook.com; overridden only for local end-to-end tests. */
+  graphBaseUrl?: string;
 }
 
 export class WhatsAppSendError extends Error {
@@ -83,7 +85,7 @@ export function createWhatsAppClient(cfg: WhatsAppConfig, fetchImpl: typeof fetc
       const body = buildNoticeBody(templateName(p.language), p);
       let res: Response;
       try {
-        res = await fetchImpl(`https://graph.facebook.com/${cfg.graphVersion}/${phoneNumberId}/messages`, {
+        res = await fetchImpl(`${cfg.graphBaseUrl ?? "https://graph.facebook.com"}/${cfg.graphVersion}/${phoneNumberId}/messages`, {
           method: "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
           body: JSON.stringify(body),

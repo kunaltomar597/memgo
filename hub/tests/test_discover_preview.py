@@ -59,3 +59,43 @@ def test_preview_stops_after_ten_minutes() -> None:
     parts = list(mjpeg(frames, lambda f: [det], max_seconds=600, clock=clock))
     assert 1 <= len(parts) <= 5
     assert parts[0].startswith(b"--remuframe\r\nContent-Type: image/jpeg")
+
+
+def test_discover_route_returns_the_app_shape(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from fastapi.testclient import TestClient
+
+    from remu_hub.api.app import create_app
+    from remu_hub.db import auth
+    from remu_hub.video import discover as disc
+    from tests.helpers import make_hub
+
+    hub = make_hub(tmp_path)
+    client = TestClient(create_app(hub))
+    token = client.post("/pair", json={"code": auth.create_hub_code(hub.db)}).json()["app_token"]
+    h = {"Authorization": f"Bearer {token}"}
+    seen: list[tuple[str, str]] = []
+
+    def fake(subnet: str, user: str, password: str, **_: object) -> list[disc.Candidate]:
+        seen.append((user, password))
+        return [
+            disc.Candidate(
+                "10.0.0.5",
+                "hikvision",
+                1,
+                "rtsp://u:p@10.0.0.5:554/x",
+                True,
+                1280,
+                720,
+                b"\xff\xd8",
+            )
+        ]
+
+    monkeypatch.setattr(disc, "discover", fake)
+    body = client.post(
+        "/discover",
+        json={"user": "admin", "password": "s3cret", "subnet": "10.0.0.0/30"},
+        headers=h,
+    ).json()
+    assert body["streams"][0]["url"].startswith("rtsp://") and body["streams"][0]["id"]
+    again = client.get("/discover", headers=h).json()
+    assert again["streams"] and seen[-1] == ("admin", "s3cret")

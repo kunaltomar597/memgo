@@ -41,6 +41,7 @@ export function getDeps(): Deps {
       templateEn: env.whatsappTemplateEn,
       templateHi: env.whatsappTemplateHi,
       graphVersion: env.whatsappGraphVersion,
+      graphBaseUrl: env.whatsappGraphBaseUrl,
     }),
     fcm: createFcmClient(env.fcmServiceAccountJsonBase64),
     ops: createOpsNotifier(env.opsAlertWebhookUrl),

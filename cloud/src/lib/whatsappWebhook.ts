@@ -206,7 +206,7 @@ async function handleInbound(deps: Deps, msg: WaMessage): Promise<void> {
   await deps.db.tx(async (tx) => {
     const inserted = await tx.query<{ id: string }>(
       `insert into whatsapp_messages (direction, kind, wamid, context_wamid, phone_hash, status, received_ts, raw_webhook_json)
-       values ('in', $1, $2, $3, $4, 'received', $5::timestamptz, jsonb_build_array($6::jsonb))
+       values ('in', $1, $2, $3, $4, 'received', $5::timestamptz, jsonb_build_array($6::text::jsonb))
        on conflict (wamid) do nothing returning id::text`,
       [kind, msg.id, msg.context?.id ?? null, phoneHash, at.toISOString(), JSON.stringify(raw)],
     );

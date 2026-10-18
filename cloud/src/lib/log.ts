@@ -4,6 +4,10 @@
  * even by mistake (docs/RULES.md privacy invariant 10). Ids are fine; values are not.
  */
 const ALLOWED = new Set([
+  "error_class",
+  "sqlstate",
+  "constraint",
+  "routine",
   "component",
   "event",
   "shop_id",

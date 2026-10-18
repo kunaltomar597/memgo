@@ -91,7 +91,10 @@ def list_visits(db: Database, member_id: str) -> list[dict[str, Any]]:
     rows = db.all(
         "SELECT * FROM visits WHERE member_id = ? ORDER BY ts DESC, id DESC", (member_id,)
     )
-    return [visit_payload(db, r["id"]) | {"has_clip": r["clip_id"] is not None} for r in rows]
+    return [
+        visit_payload(db, r["id"]) | {"has_clip": r["clip_id"] is not None, "clip_id": r["clip_id"]}
+        for r in rows
+    ]
 
 
 def add_clip(db: Database, visit_id: str, path_enc: str, expires_at: str) -> str:

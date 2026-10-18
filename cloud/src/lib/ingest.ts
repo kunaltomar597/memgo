@@ -151,7 +151,7 @@ const applyConsent: Applier<"consent_record"> = async (tx, deps, device, rec) =>
     `insert into consent_records (id, shop_id, member_id, bill_no, ts, cashier_id, channel, script_version, notice_version,
        purposes_json, notice_delivery_json, adult_check, withdrawn_at, template_deleted_at, prev_hash, record_hash,
        device_id, hash_ok, link_ok)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::jsonb,$11::text::jsonb,$12,$13,$14,$15,$16,$17,$18,$19)`,
     [rec.id, rec.shop_id, rec.member_id, rec.bill_no, rec.ts, rec.cashier_id, rec.channel, rec.script_version,
       rec.notice_version, JSON.stringify(rec.purposes_json), JSON.stringify(rec.notice_delivery_json), rec.adult_check,
       rec.withdrawn_at, rec.template_deleted_at, rec.prev_hash, rec.record_hash, device.id, hashOk, linkOk],
@@ -223,7 +223,7 @@ const applyHousehold: Applier<"household_upsert"> = async (tx, _deps, device, h)
   if (existing[0] && existing[0].shop_id !== h.shop_id) throw new Reject("shop_mismatch");
   await tx.query(
     `insert into households (id, shop_id, label, payer_member_id, member_ids, created_at)
-     values ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)
+     values ($1, $2, $3, $4, $5::text::jsonb, $6::timestamptz)
      on conflict (id) do update set label = excluded.label, payer_member_id = excluded.payer_member_id,
        member_ids = excluded.member_ids, updated_at = now()`,
     [h.id, h.shop_id, h.label, h.payer_member_id, JSON.stringify(h.member_ids), h.created_at],
@@ -315,7 +315,7 @@ const applyAlert: Applier<"alert"> = async (tx, deps, device, a) => {
 
 const applyHealth: Applier<"health"> = async (tx, deps, device, h, ev) => {
   await tx.query(
-    `update devices set hub_version = $2, last_health_at = $3::timestamptz, last_health_json = $4::jsonb, locked = $5,
+    `update devices set hub_version = $2, last_health_at = $3::timestamptz, last_health_json = $4::text::jsonb, locked = $5,
        last_seen_at = greatest(coalesce(last_seen_at, $3::timestamptz), $3::timestamptz), updated_at = now()
      where id = $1`,
     [device.id, h.version, deps.now().toISOString(), JSON.stringify(h), h.locked],

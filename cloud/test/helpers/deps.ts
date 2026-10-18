@@ -68,6 +68,7 @@ export const TEST_ENV: Env = {
   whatsappTemplateEn: "remu_member_notice_en_v1",
   whatsappTemplateHi: "remu_member_notice_hi_v1",
   whatsappGraphVersion: "v21.0",
+  whatsappGraphBaseUrl: "https://graph.facebook.com",
   hubPairingSecret: "test-hub-pairing-secret-0123456789abcdef",
   consentExportSigningKey: Buffer.alloc(32, 7).toString("base64"),
   opsApiKey: "test-ops-key",

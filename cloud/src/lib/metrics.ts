@@ -250,7 +250,7 @@ export async function snapshotMetrics(db: Db, now: Date): Promise<MetricsReport>
   const to = toDate.toISOString().slice(0, 10);
   const report = await computeMetrics(db, from, to, now);
   await db.query(
-    "insert into pilot_metrics_snapshots (period_from, period_to, metrics_json, computed_at) values ($1::date, $2::date, $3::jsonb, $4::timestamptz)",
+    "insert into pilot_metrics_snapshots (period_from, period_to, metrics_json, computed_at) values ($1::date, $2::date, $3::text::jsonb, $4::timestamptz)",
     [from, to, JSON.stringify(report), now.toISOString()],
   );
   return report;

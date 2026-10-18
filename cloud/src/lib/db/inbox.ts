@@ -19,7 +19,7 @@ export async function queueInbox(
 ): Promise<number> {
   const rows = await db.query<{ id: string }>(
     `insert into inbox_messages (shop_id, device_id, type, payload)
-     select $1, d.id, $2, $3::jsonb from devices d
+     select $1, d.id, $2, $3::text::jsonb from devices d
      where d.shop_id = $1 and ($4::text is null and d.status = 'paired' or d.id = $4::text)
      returning id::text`,
     [shopId, type, JSON.stringify(payload), deviceId ?? null],
